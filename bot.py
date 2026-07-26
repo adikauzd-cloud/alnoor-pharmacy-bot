@@ -560,7 +560,7 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📞 **አል-ኑር መድኃኒት አፋላጊ - የደንበኞች ድጋፍ**\n\n"
         "ማንኛውም ጥያቄ ወይም አስተያየት ካለዎት፦\n"
-        "• **ስልክ፦** +251 911 00 00 00\n"
+        "• **ስልክ፦** +251 911 95 95 85\n"
         "• **ቴሌግራም፦** @AlNoorSupport",
         reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
     )
