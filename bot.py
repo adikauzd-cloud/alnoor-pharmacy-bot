@@ -13,22 +13,37 @@ from telegram.ext import (
     ConversationHandler,
     filters,
 )
+import google.generativeai as genai
 
-# ----------------- 0. FLASK WEB SERVER (ለ RENDER WEB SERVICE) -----------------
+# ==============================================================================
+# 0. FLASK WEB SERVER (ለ RENDER እና UPTIMEROBOT)
+# ==============================================================================
 web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "✅ አል-ኑር መድኃኒት አፋላጊ ቦት በስኬት እየሰራ ይገኛል!"
+    return "✅ አል-ኑር መድኃኒት አፋላጊ ቦት በስኬት እየሰራ ይገኛል!", 200
 
 def run_flask():
-    # Render የሚሰጠውን PORT ወይም በዲፎልት 8080 ይጠቀማል
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host="0.0.0.0", port=port)
 
-# ----------------- 1. CONFIG & DATABASE SETUP -----------------
-BOT_TOKEN = "8697195057:AAEWFLHH8EvXNNc4kCyQMke62CvDz-oYgNc"
-ADMIN_CHAT_ID = 7030641737  # ያንተ የቴሌግራም Chat ID
+# ==============================================================================
+# 1. CONFIG & DATABASE & GEMINI AI SETUP
+# ==============================================================================
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8697195057:AAEWFLHH8EvXNNc4kCyQMke62CvDz-oYgNc")
+ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "7030641737"))
+
+# የሎጎ ፎቶ File ID
+LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
+
+# Gemini AI Setup (ቁልፉ በ Render Environment Variable በኩል ይነበባል)
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    ai_model = None
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -44,20 +59,26 @@ def init_db():
             name TEXT NOT NULL,
             location TEXT NOT NULL,
             phone TEXT NOT NULL,
+            operating_hours TEXT,
             license_photo TEXT,
             is_verified INTEGER DEFAULT 0
         )
     """)
+    try:
+        cursor.execute("ALTER TABLE pharmacies ADD COLUMN operating_hours TEXT DEFAULT 'ያልተጠቀሰ'")
+    except sqlite3.OperationalError:
+        pass
+        
     conn.commit()
     conn.close()
 
-def register_pharmacy_db(chat_id, name, location, phone, license_photo):
+def register_pharmacy_db(chat_id, name, location, phone, operating_hours, license_photo):
     conn = sqlite3.connect("pharmacy_bot.db")
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO pharmacies (chat_id, name, location, phone, license_photo, is_verified)
-        VALUES (?, ?, ?, ?, ?, 0)
-    """, (chat_id, name, location, phone, license_photo))
+        INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified)
+        VALUES (?, ?, ?, ?, ?, ?, 0)
+    """, (chat_id, name, location, phone, operating_hours, license_photo))
     pharmacy_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -73,7 +94,7 @@ def verify_pharmacy_db(pharmacy_id):
 def get_pharmacy_info_by_id(pharmacy_id):
     conn = sqlite3.connect("pharmacy_bot.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT name, location, phone, chat_id FROM pharmacies WHERE id = ?", (pharmacy_id,))
+    cursor.execute("SELECT name, location, phone, chat_id, operating_hours FROM pharmacies WHERE id = ?", (pharmacy_id,))
     row = cursor.fetchone()
     conn.close()
     return row
@@ -92,7 +113,7 @@ def get_verified_pharmacies_by_location(location=None):
 def get_all_verified_pharmacies():
     conn = sqlite3.connect("pharmacy_bot.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT name, location, phone FROM pharmacies WHERE is_verified = 1")
+    cursor.execute("SELECT name, location, phone, operating_hours FROM pharmacies WHERE is_verified = 1")
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -100,33 +121,34 @@ def get_all_verified_pharmacies():
 def get_bot_statistics():
     conn = sqlite3.connect("pharmacy_bot.db")
     cursor = conn.cursor()
-    
     cursor.execute("SELECT COUNT(*) FROM pharmacies")
     total_pharmacies = cursor.fetchone()[0]
-    
     cursor.execute("SELECT COUNT(*) FROM pharmacies WHERE is_verified = 1")
     verified_pharmacies = cursor.fetchone()[0]
-    
     cursor.execute("SELECT COUNT(*) FROM pharmacies WHERE is_verified = 0")
     pending_pharmacies = cursor.fetchone()[0]
-    
     conn.close()
     return total_pharmacies, verified_pharmacies, pending_pharmacies
 
-# ----------------- 2. STATES & KEYBOARDS -----------------
+# ==============================================================================
+# 2. STATES & KEYBOARDS
+# ==============================================================================
 WAITING_FOR_SEARCH = 1
 WAITING_FOR_PRICE = 2
 WAITING_FOR_LOCATION_SET = 3
+WAITING_FOR_MED_INFO = 4
 
 REG_NAME = 10
 REG_LOCATION = 11
 REG_PHONE = 12
+REG_HOURS = 14
 REG_LICENSE = 13
 
 MAIN_KEYBOARD = [
-    ["🔍 መድኃኒት ፈልግ", "📍 አካባቢ ምረጥ"],
-    ["📋 የፋርማሲዎች ዝርዝር", "🏥 ፋርማሲ መዝግብ"],
-    ["📞 እገዛ / ድጋፍ", "🏠 ወደ ዋና ገጽ"]
+    ["🔍 መድኃኒት ፈልግ", "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ"],
+    ["📍 አካባቢ ምረጥ", "📋 የፋርማሲዎች ዝርዝር"],
+    ["🏥 ፋርማሲ መዝግብ", "📞 እገዛ / ድጋፍ"],
+    ["🏠 ወደ ዋና ገጽ"]
 ]
 
 LOCATION_KEYBOARD = [
@@ -136,7 +158,15 @@ LOCATION_KEYBOARD = [
     ["🏠 ወደ ዋና ገጽ"]
 ]
 
-# ----------------- 3. HANDLERS -----------------
+HOURS_KEYBOARD = [
+    ["🕒 24 ሰዓት ክፍት"],
+    ["☀️ በቀን ብቻ (ከጠዋቱ 2:00 - ማታ 2:00)"],
+    ["🏠 ወደ ዋና ገጽ"]
+]
+
+# ==============================================================================
+# 3. HANDLERS & LOGIC
+# ==============================================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name if update.effective_user else "ወዳጄ"
 
@@ -151,22 +181,93 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if update.message:
-        await update.message.reply_text(
-            welcome_text,
-            parse_mode="Markdown",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
-        )
+        try:
+            await update.message.reply_photo(
+                photo=LOGO_FILE_ID,
+                caption=welcome_text,
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
+            )
+        except Exception as e:
+            logging.error(f"ፎቶ መጫን አልተቻለም፦ {e}")
+            await update.message.reply_text(
+                welcome_text,
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
+            )
     return ConversationHandler.END
 
+# ----------------- AI የመድኃኒት መረጃ ማብራሪያ SECTION -----------------
+async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📖 **ስለ ታዘዘልዎት መድኃኒት መረጃ ማወቂያ**\n\n"
+        "እባክዎ ስለ መድኃኒቱ መረጃ ለማግኘት፦\n"
+        "1. **የመድኃኒቱን ስም በጽሑፍ** ይጻፉልን፡ ወይም\n"
+        "2. **የሐኪም ማዘዣውን (Prescription) ፎቶ** አንስተው ይላኩልን።\n\n"
+        "🤖 *AI መድኃኒቱ ለምን እንደሚያገለግል፣ አወሳሰዱን እና ጥንቃቄዎችን ያብራራልዎታል።*",
+        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+    )
+    return WAITING_FOR_MED_INFO
+
+async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg:
+        return WAITING_FOR_MED_INFO
+
+    if msg.text == "🏠 ወደ ዋና ገጽ":
+        return await start(update, context)
+
+    if not ai_model:
+        await msg.reply_text(
+            "⚠️ የ AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        return ConversationHandler.END
+
+    await msg.reply_text("⏳ **መረጃው በ AI በመተንተን ላይ ነው... እባክዎ ትንሽ ይጠብቁ...**")
+
+    prompt = (
+        "እባክህ የዚህን መድኃኒት ወይም የሐኪም ማዘዣ ፎቶ መዝገብ ተንትነህ በሚከተለው መልኩ በአማርኛ አብራራ፦\n"
+        "1. የመድኃኒቱ ስም (Medication Name)\n"
+        "2. ዋነኛ ጥቅም (Primary Usage)\n"
+        "3. አወሳሰድ እና ጥንቃቄዎች (Dosage & Precautions)\n"
+        "4. ሊከሰቱ የሚችሉ የጎንዮሽ ጉዳቶች (Side Effects)\n\n"
+        "ማስታወሻ፦ መረጃው ለግንዛቤ ብቻ እንደሆነ እና የሐኪም ምክርን እንደማይተካ በጥሩ ስነ-ምግባር ግለጽ።"
+    )
+
+    try:
+        if msg.photo:
+            photo_file = await msg.photo[-1].get_file()
+            photo_bytes = await photo_file.download_as_bytearray()
+            image_part = {"mime_type": "image/jpeg", "data": bytes(photo_bytes)}
+            response = ai_model.generate_content([prompt, image_part])
+            
+        elif msg.text:
+            response = ai_model.generate_content(f"{prompt}\n\nየመድኃኒቱ ስም፦ {msg.text}")
+
+        await msg.reply_text(
+            f"💡 **የመድኃኒት መረጃ ማብራሪያ፦**\n\n{response.text}\n\n"
+            f"⚠️ *ማስታወሻ፦ ይህ መረጃ በ AI የተዘጋጀ ለግንዛቤ ብቻ የሚያገለግል ነው። ሁልጊዜ የሐኪምዎን ወይም የፋርማሲስቱን መመሪያ ይከተሉ።*",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+    except Exception as e:
+        logging.error(f"AI error: {e}")
+        await msg.reply_text(
+            "❌ መረጃውን መተንተን አልተቻለም። እባክዎ የምስሉ ጥራት ጥሩ መሆኑን ያረጋግጡ ወይም የመድኃኒቱን ስም በጽሑፍ ይጻፉልን።",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+
+    return ConversationHandler.END
+
+# ----------------- ADMIN & OTHERS -----------------
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
     if user_id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ ይቅርታ! ይህንን ትዕዛዝ መጠቀም የሚችለው አድሚኑ ብቻ ነው።")
         return
 
     total, verified, pending = get_bot_statistics()
-
     stats_text = (
         f"📊 **የቦቱ ስታቲስቲክስ እና መረጃ**\n\n"
         f"🏥 **ጠቅላላ የተመዘገቡ ፋርማሲዎች፦** {total}\n"
@@ -175,12 +276,10 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"━━━━━━━━━━━━━━━\n"
         f"🤖 *አል-ኑር መድኃኒት አፋላጊ ሲስተም*"
     )
-
     await update.message.reply_text(stats_text, parse_mode="Markdown")
 
 async def list_pharmacies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pharmacies = get_all_verified_pharmacies()
-    
     if not pharmacies:
         await update.message.reply_text(
             "ℹ️ በአሁኑ ሰዓት የተረጋገጡ ሕጋዊ ፋርማሲዎች አልተገኙም።\n(አዲስ ከተመዘገቡ በአድሚን 'Approve' መደረጋቸውን ያረጋግጡ)",
@@ -189,16 +288,15 @@ async def list_pharmacies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     text = "🏥 **የተመዘገቡ ሕጋዊ ፋርማሲዎች ዝርዝር፦**\n\n"
-    for idx, (name, loc, phone) in enumerate(pharmacies, 1):
+    for idx, (name, loc, phone, hours) in enumerate(pharmacies, 1):
         text += f"{idx}. **{name}**\n"
         text += f"   📍 አካባቢ፦ {loc}\n"
         text += f"   📞 ስልክ፦ {phone}\n"
+        text += f"   🕒 የስራ ሰዓት፦ {hours}\n"
         text += "────────────────────\n"
 
     await update.message.reply_text(
-        text,
-        parse_mode="Markdown",
-        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
     )
 
 async def select_location_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -218,7 +316,6 @@ async def save_user_location(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     selected_loc = msg.text
     context.user_data["user_location"] = selected_loc
-
     await msg.reply_text(
         f"✅ አካባቢዎ በስኬት ወደ **'{selected_loc}'** ተቀይሯል!\n\n"
         f"አሁን መድኃኒት ሲፈልጉ ጥያቄዎ በቅድሚያ ለ**{selected_loc}** አካባቢ ፋርማሲዎች ይላካል።",
@@ -229,7 +326,6 @@ async def save_user_location(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def prompt_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_loc = context.user_data.get("user_location")
     loc_text = f"📍 የተመረጠው አካባቢ፦ **{user_loc}**\n\n" if user_loc else "📍 *(አካባቢ አልመረጡም - ጥያቄው ለሁሉም ፋርማሲዎች ይላካል)*\n\n"
-
     await update.message.reply_text(
         f"{loc_text}"
         f"እባክዎ የሚፈልጉትን መድኃኒት፦\n"
@@ -242,15 +338,11 @@ async def prompt_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-    if not msg:
-        return WAITING_FOR_SEARCH
-
-    if msg.text and msg.text == "🏠 ወደ ዋና ገጽ":
+    if not msg or (msg.text and msg.text == "🏠 ወደ ዋና ገጽ"):
         return await start(update, context)
 
     user = update.effective_user
     user_loc = context.user_data.get("user_location")
-    
     verified_pharmacies = get_verified_pharmacies_by_location(user_loc) if user_loc else []
     if not verified_pharmacies:
         verified_pharmacies = get_verified_pharmacies_by_location(None)
@@ -262,18 +354,10 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
     target_chats = verified_pharmacies if verified_pharmacies else [msg.chat_id]
 
-    photo_file_id = None
-    is_doc = False
-
-    if msg.photo:
-        photo_file_id = msg.photo[-1].file_id
-    elif msg.document:
-        photo_file_id = msg.document.file_id
-        is_doc = True
-
+    photo_file_id = msg.photo[-1].file_id if msg.photo else (msg.document.file_id if msg.document else None)
+    is_doc = True if msg.document else False
     loc_tag = f" (አካባቢ፦ {user_loc})" if user_loc else ""
 
     if photo_file_id:
@@ -281,7 +365,6 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
             f"✅ የሐኪም ማዘዣ ፎቶዎ ተቀብለናል! ለ{len(target_chats)} ሕጋዊ ፋርማሲዎች ጥያቄው ተልኳል።{loc_tag}",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
         )
-
         for chat_id in target_chats:
             try:
                 caption = f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ (በፎቶ)!**\nከደንበኛ፡ {user.first_name}\n📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n\nመድኃኒቱ አለዎት?"
@@ -298,7 +381,6 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
             f"✅ የመድኃኒት ስም '{med_name}' ተቀብለናል! ለ{len(target_chats)} ሕጋዊ ፋርማሲዎች እየተላከ ነው...{loc_tag}",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
         )
-
         for chat_id in target_chats:
             try:
                 await context.bot.send_message(
@@ -314,19 +396,17 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
 async def handle_pharmacy_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     data = query.data
-    action, customer_id = data.split("_")
-
+    
+    # rsplit("_", 1) በመጠቀም ከመጨረሻው underline ብቻ ይለያል
+    action, customer_id = data.rsplit("_", 1)
     context.chat_data["target_customer_id"] = customer_id
 
     if action == "available":
         msg_text = (
             "✅ **'መድኃኒቱ አለኝ' የሚለው ምላሽዎ ተመዝግቧል!**\n\n"
             "እባክዎ የመድኃቶቹን ዋጋ እና ተጨማሪ መረጃ ያስገቡ።\n\n"
-            "**ምሳሌ አጻጻፍ፦**\n"
-            "• አሞክሳሲሊን - 150 ብር\n"
-            "• ፓራሲታሞል - 50 ብር"
+            "**ምሳሌ አጻጻፍ፦**\n• አሞክሳሲሊን - 150 ብር\n• ፓራሲታሞል - 50 ብር"
         )
         try:
             await query.edit_message_caption(caption=msg_text)
@@ -352,18 +432,16 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
 
     conn = sqlite3.connect("pharmacy_bot.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT name, location, phone FROM pharmacies WHERE chat_id = ? ORDER BY id DESC LIMIT 1", (pharmacy_chat_id,))
+    cursor.execute("SELECT name, location, phone, operating_hours FROM pharmacies WHERE chat_id = ? ORDER BY id DESC LIMIT 1", (pharmacy_chat_id,))
     pharm_info = cursor.fetchone()
     conn.close()
 
     pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
     pharm_loc = pharm_info[1] if pharm_info else "ያልተጠቀሰ"
     pharm_phone = pharm_info[2] if pharm_info else "ያልተጠቀሰ"
+    pharm_hours = pharm_info[3] if pharm_info and pharm_info[3] else "ያልተጠቀሰ"
 
-    await msg.reply_text(
-        "✅ ዋጋው እና መረጃው ለደንበኛው በስኬት ተልኳል!",
-        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
-    )
+    await msg.reply_text("✅ ዋጋው እና መረጃው ለደንበኛው በስኬት ተልኳል!", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
 
     if customer_id:
         try:
@@ -372,7 +450,8 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
                 text=f"🎉 **የመድኃኒት መረጃ ከ{pharm_name} ተገኘ!**\n\n"
                      f"🏥 **ፋርማሲ፦** {pharm_name}\n"
                      f"📍 **አካባቢ፦** {pharm_loc}\n"
-                     f"📞 **ስልክ፦** {pharm_phone}\n\n"
+                     f"📞 **ስልክ፦** {pharm_phone}\n"
+                     f"🕒 **የስራ ሰዓት፦** {pharm_hours}\n\n"
                      f"💰 **የዋጋ እና የዝርዝር መረጃ፦**\n{price_details}\n\n"
                      f"📄 *እባክዎ በአካል ሲሄዱ የሐኪም ማዘዣ (Prescription) መያዝዎን አይረሱ!*",
                 reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
@@ -385,12 +464,10 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
 async def handle_admin_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
     data = query.data
     if data.startswith("verify_"):
         pharmacy_id = int(data.split("_")[1])
         verify_pharmacy_db(pharmacy_id)
-
         pharm_info = get_pharmacy_info_by_id(pharmacy_id)
         pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
         pharm_chat_id = pharm_info[3] if pharm_info else None
@@ -402,17 +479,13 @@ async def handle_admin_approval(update: Update, context: ContextTypes.DEFAULT_TY
 
         if pharm_chat_id:
             try:
-                await context.bot.send_message(
-                    chat_id=pharm_chat_id,
-                    text=f"🎉 **እንኳን ደስ አለዎት!**\n\nየፋርማሲዎት (**{pharm_name}**) ምዝገባ በአድሚኑ ተረጋግጧል።"
-                )
+                await context.bot.send_message(chat_id=pharm_chat_id, text=f"🎉 **እንኳን ደስ አለዎት!**\n\nየፋርማሲዎት (**{pharm_name}**) ምዝገባ በአድሚኑ ተረጋግጧል።")
             except Exception as e:
                 logging.error(f"ለፋርማሲው ማሳወቂያ መላክ አልተቻለም፦ {e}")
 
 async def start_pharmacy_reg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🏥 **የፋርማሲ መመዝገቢያ ክፍል**\n\n"
-        "እባክዎ የፋርማሲዎን **ሙሉ ስም** ያስገቡ፦",
+        "🏥 **የፋርማሲ መመዝገቢያ ክፍል**\n\nእባክዎ የፋርማሲዎን **ሙሉ ስም** ያስገቡ፦",
         reply_markup=ReplyKeyboardMarkup([["🏠 ወደ ዋና ገጽ"]], resize_keyboard=True)
     )
     return REG_NAME
@@ -421,10 +494,9 @@ async def reg_get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if msg.text == "🏠 ወደ ዋና ገጽ":
         return await start(update, context)
-
     context.user_data["pharm_name"] = msg.text
     await msg.reply_text(
-        "📍 ፋርማሲዎ የሚገኝበትን **ክፍለ ከተማ / አካባቢ** ከታች ይምረጡ ወይም ይጻፉ (ምሳሌ፦ ቦሌ፣ አራዳ፣ አዲስ ከተማ)፦",
+        "📍 ፋርማሲዎ የሚገኝበትን **ክፍለ ከተማ / አካባቢ** ከታች ይምረጡ ወይም ይጻፉ፦",
         reply_markup=ReplyKeyboardMarkup(LOCATION_KEYBOARD, resize_keyboard=True)
     )
     return REG_LOCATION
@@ -433,41 +505,33 @@ async def reg_get_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if msg.text == "🏠 ወደ ዋና ገጽ":
         return await start(update, context)
-
     context.user_data["pharm_location"] = msg.text
-    await msg.reply_text(
-        "📞 ደንበኞች የሚያገኙበትን **የፋርማሲ የስልክ ቁጥር** ያስገቡ፦",
-        reply_markup=ReplyKeyboardMarkup([["🏠 ወደ ዋና ገጽ"]], resize_keyboard=True)
-    )
+    await msg.reply_text("📞 ደንበኞች የሚያገኙበትን **የፋርማሲ የስልክ ቁጥር** ያስገቡ፦", reply_markup=ReplyKeyboardMarkup([["🏠 ወደ ዋና ገጽ"]], resize_keyboard=True))
     return REG_PHONE
 
 async def reg_get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if msg.text == "🏠 ወደ ዋና ገጽ":
         return await start(update, context)
-
     context.user_data["pharm_phone"] = msg.text
-    await msg.reply_text(
-        "📄 **የንግድ ፈቃድ ወይም የመድኃኒት መሸጫ ፈቃድ ፎቶ** አንስተው ይላኩልን፦"
-    )
+    await msg.reply_text("🕒 **የፋርማሲዎ የስራ ሰዓት መቼ ነው?**", reply_markup=ReplyKeyboardMarkup(HOURS_KEYBOARD, resize_keyboard=True))
+    return REG_HOURS
+
+async def reg_get_hours(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if msg.text == "🏠 ወደ ዋና ገጽ":
+        return await start(update, context)
+    context.user_data["pharm_hours"] = msg.text
+    await msg.reply_text("📄 **የንግድ ፈቃድ ወይም የመድኃኒት መሸጫ ፈቃድ ፎቶ** አንስተው ይላኩልን፦", reply_markup=ReplyKeyboardMarkup([["🏠 ወደ ዋና ገጽ"]], resize_keyboard=True))
     return REG_LICENSE
 
 async def reg_get_license(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-    if not msg:
-        return REG_LICENSE
-
-    if msg.text and msg.text == "🏠 ወደ ዋና ገጽ":
+    if not msg or (msg.text and msg.text == "🏠 ወደ ዋና ገጽ"):
         return await start(update, context)
 
-    photo_file_id = None
-    is_doc = False
-
-    if msg.photo:
-        photo_file_id = msg.photo[-1].file_id
-    elif msg.document:
-        photo_file_id = msg.document.file_id
-        is_doc = True
+    photo_file_id = msg.photo[-1].file_id if msg.photo else (msg.document.file_id if msg.document else None)
+    is_doc = True if msg.document else False
 
     if not photo_file_id:
         await msg.reply_text("❌ እባክዎ የንግድ ፈቃዱን **በፎቶ መልኩ** ያያይዙልን።")
@@ -477,29 +541,13 @@ async def reg_get_license(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = context.user_data.get("pharm_name", "ያልተጠቀሰ")
     location = context.user_data.get("pharm_location", "ያልተጠቀሰ")
     phone = context.user_data.get("pharm_phone", "ያልተጠቀሰ")
+    hours = context.user_data.get("pharm_hours", "ያልተጠቀሰ")
 
-    pharm_id = register_pharmacy_db(chat_id, name, location, phone, photo_file_id)
+    pharm_id = register_pharmacy_db(chat_id, name, location, phone, hours, photo_file_id)
+    await msg.reply_text("📝 **የምዝገባ ጥያቄዎ ተቀብለናል!**\n\n⏳ የላኩት የንግድ ፈቃድ በአድሚን ተመርምሮ ሲረጋገጥ ማሳወቂያ ይደርስዎታል።", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
 
-    await msg.reply_text(
-        f"📝 **የምዝገባ ጥያቄዎ ተቀብለናል!**\n\n"
-        f"🏥 **ስም፦** {name}\n"
-        f"📍 **አካባቢ፦** {location}\n"
-        f"📞 **ስልክ፦** {phone}\n\n"
-        f"⏳ የላኩት የንግድ ፈቃድ በአድሚን ተመርምሮ ሲረጋገጥ ማሳወቂያ ይደርስዎታል።",
-        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-    )
-
-    admin_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ ፈቅድ (Approve)", callback_data=f"verify_{pharm_id}")]
-    ])
-
-    caption_text = (
-        f"🔔 **አዲስ የፋርማሲ ምዝገባ ጥያቄ!**\n\n"
-        f"🏥 **ስም፦** {name}\n"
-        f"📍 **አካባቢ፦** {location}\n"
-        f"📞 **ስልክ፦** {phone}\n\n"
-        f"ሕጋዊነቱን አረጋግጠው ይፍቀዱ፦"
-    )
+    admin_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✅ ፈቅድ (Approve)", callback_data=f"verify_{pharm_id}")]])
+    caption_text = f"🔔 **አዲስ የፋርማሲ ምዝገባ ጥያቄ!**\n\n🏥 **ስም፦** {name}\n📍 **አካባቢ፦** {location}\n📞 **ስልክ፦** {phone}\n🕒 **የስራ ሰዓት፦** {hours}\n\nሕጋዊነቱን አረጋግጠው ይፍቀዱ፦"
 
     try:
         if is_doc:
@@ -507,7 +555,7 @@ async def reg_get_license(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await context.bot.send_photo(chat_id=ADMIN_CHAT_ID, photo=photo_file_id, caption=caption_text, parse_mode="Markdown", reply_markup=admin_keyboard)
     except Exception as e:
-        logging.error(f"ለአድሚን ({ADMIN_CHAT_ID}) ኖቲፊኬሽን መላክ አልተቻለም፦ {e}")
+        logging.error(f"ለአድሚን ኖቲፊኬሽን መላክ አልተቻለም፦ {e}")
 
     return ConversationHandler.END
 
@@ -516,59 +564,43 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📞 **አል-ኑር መድኃኒት አፋላጊ - የደንበኞች ድጋፍ**\n\n"
         "ማንኛውም ጥያቄ ወይም አስተያየት ካለዎት፦\n"
         "• **ስልክ፦** +251 911 00 00 00\n"
-        "• **ቴሌግራም፦** @AlNoorSupport\n\n"
-        "መድኃኒት ለመፈለግ **'🔍 መድኃኒት ፈልግ'** የሚለውን ቁልፍ ይጫኑ።",
+        "• **ቴሌግራም፦** @AlNoorSupport",
         reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
     )
 
 async def error_handler_func(update: object, context: ContextTypes.DEFAULT_TYPE):
     logging.error(msg="Exception while handling an update:", exc_info=context.error)
 
-# ----------------- 4. MAIN FUNCTION -----------------
+# ==============================================================================
+# 4. MAIN FUNCTION
+# ==============================================================================
 def main():
-    # 1. ዳታቤዙን ማዘጋጀት
     init_db()
-
-    # 2. Flask Web Server በ Thread አስነስቶ Render Port እንዲያገኝ ማድረግ
     threading.Thread(target=run_flask, daemon=True).start()
 
-    # 3. የቴሌግራም አፕሊኬሽን ማዘጋጀት
     app = Application.builder().token(BOT_TOKEN).build()
 
     loc_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^📍 አካባቢ ምረጥ$"), select_location_prompt)],
-        states={
-            WAITING_FOR_LOCATION_SET: [
-                MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, save_user_location),
-            ]
-        },
+        states={WAITING_FOR_LOCATION_SET: [MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start), MessageHandler(filters.TEXT & ~filters.COMMAND, save_user_location)]},
         fallbacks=[CommandHandler("start", start), MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)],
     )
 
     search_conv = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.Regex("^🔍 መድኃኒት ፈልግ$"), prompt_search),
-        ],
-        states={
-            WAITING_FOR_SEARCH: [
-                MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start),
-                MessageHandler(filters.ALL, handle_customer_request),
-            ],
-        },
+        entry_points=[MessageHandler(filters.Regex("^🔍 መድኃኒት ፈልግ$"), prompt_search)],
+        states={WAITING_FOR_SEARCH: [MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start), MessageHandler(filters.ALL, handle_customer_request)]},
+        fallbacks=[CommandHandler("start", start), MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)],
+    )
+
+    med_info_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ$"), prompt_med_info)],
+        states={WAITING_FOR_MED_INFO: [MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start), MessageHandler(filters.ALL, analyze_med_info)]},
         fallbacks=[CommandHandler("start", start), MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)],
     )
 
     pharmacy_reply_conv = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(handle_pharmacy_response, pattern="^(available_|not_available_)")
-        ],
-        states={
-            WAITING_FOR_PRICE: [
-                MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_price_details),
-            ],
-        },
+        entry_points=[CallbackQueryHandler(handle_pharmacy_response, pattern="^(available_|not_available_)")],
+        states={WAITING_FOR_PRICE: [MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start), MessageHandler(filters.TEXT & ~filters.COMMAND, receive_price_details)]},
         fallbacks=[CommandHandler("start", start), MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)],
         per_message=False,
     )
@@ -576,39 +608,25 @@ def main():
     pharmacy_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^🏥 ፋርማሲ መዝግብ$"), start_pharmacy_reg)],
         states={
-            REG_NAME: [
-                MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, reg_get_name)
-            ],
-            REG_LOCATION: [
-                MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, reg_get_location)
-            ],
-            REG_PHONE: [
-                MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, reg_get_phone)
-            ],
-            REG_LICENSE: [
-                MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start),
-                MessageHandler(filters.ALL, reg_get_license),
-            ],
+            REG_NAME: [MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start), MessageHandler(filters.TEXT & ~filters.COMMAND, reg_get_name)],
+            REG_LOCATION: [MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start), MessageHandler(filters.TEXT & ~filters.COMMAND, reg_get_location)],
+            REG_PHONE: [MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start), MessageHandler(filters.TEXT & ~filters.COMMAND, reg_get_phone)],
+            REG_HOURS: [MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start), MessageHandler(filters.TEXT & ~filters.COMMAND, reg_get_hours)],
+            REG_LICENSE: [MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start), MessageHandler(filters.ALL, reg_get_license)],
         },
         fallbacks=[CommandHandler("start", start), MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)],
     )
 
-    # Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", admin_stats))
-    
-    # Message Handlers
     app.add_handler(MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start))
     app.add_handler(MessageHandler(filters.Regex("^📞 እገዛ / ድጋፍ$"), show_help))
     app.add_handler(MessageHandler(filters.Regex("^📋 የፋርማሲዎች ዝርዝር$"), list_pharmacies))
     app.add_handler(CallbackQueryHandler(handle_admin_approval, pattern="^verify_"))
-    
-    # Conversation Handlers
+
     app.add_handler(loc_conv)
     app.add_handler(search_conv)
+    app.add_handler(med_info_conv)
     app.add_handler(pharmacy_reply_conv)
     app.add_handler(pharmacy_conv)
 
