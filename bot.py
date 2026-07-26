@@ -37,14 +37,92 @@ ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "7030641737"))
 # የሎጎ ፎቶ File ID
 LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
 
-# Gemini AI Setup (ቁልፉ በ Render Environment Variable በኩል ይነበባል)
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
-else:
-    ai_model = None
+from groq import Groq
 
+# Groq Client ማዘጋጀት
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "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")
+
+async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg:
+        return WAITING_FOR_MED_INFO
+    if msg.text == "🏠 ወደ ዋና ገጽ":
+        return await start(update, context)
+
+    status_msg = await msg.reply_text("⏳ **መረጃው በ Groq AI በመተንተን ላይ ነው... እባክዎ ትንሽ ይጠብቁ...**", parse_mode="Markdown")
+
+    api_key = os.environ.get("GROQ_API_KEY", GROQ_API_KEY)
+    if not api_key:
+        await status_msg.edit_text("❌ GROQ_API_KEY አልተዘጋጀም! እባክዎ በ Render Environment Variables ላይ ያስገቡ።")
+        return ConversationHandler.END
+
+    client = Groq(api_key=api_key)
+
+    prompt = (
+        "እባክህ የዚህን መድኃኒት ወይም የሐኪም ማዘዣ ፎቶ መዝገብ ተንትነህ በሚከተለው መልኩ በአማርኛ አብራራ፦\n"
+        "1. የመድኃኒቱ ስም (Medication Name)\n"
+        "2. ዋነኛ ጥቅም (Primary Usage)\n"
+        "3. አወሳሰድ እና ጥንቃቄዎች (Dosage & Precautions)\n"
+        "4. ሊከሰቱ የሚችሉ የጎንዮሽ ጉዳቶች (Side Effects)\n\n"
+        "ማስታወሻ፦ መረጃው ለግንዛቤ ብቻ እንደሆነ እና የሐኪም ምክርን እንደማይተካ በጥሩ ስነ-ምግባር ግለጽ።"
+    )
+
+    try:
+        messages = []
+        if msg.photo:
+            # ፎቶውን ወደ Base64 መቀየር
+            photo_file = await msg.photo[-1].get_file()
+            photo_bytes = await photo_file.download_as_bytearray()
+            base64_image = base64.b64encode(photo_bytes).decode('utf-8')
+
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            },
+                        },
+                    ],
+                }
+            ]
+            # ፎቶዎችን ለመተንተን llama-3.2-11b-vision-preview እንጠቀማለን
+            model_name = "llama-3.2-11b-vision-preview"
+
+        elif msg.text:
+            messages = [
+                {"role": "user", "content": f"{prompt}\n\nየመድኃኒቱ ስም፦ {msg.text}"}
+            ]
+            model_name = "llama-3.3-70b-versatile"
+
+        completion = client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            temperature=0.2,
+            max_tokens=1024,
+        )
+
+        ai_text = completion.choices[0].message.content
+
+        await msg.reply_text(
+            f"💡 **የመድኃኒት መረጃ ማብራሪያ (በ Groq AI)፦**\n\n{ai_text}\n\n"
+            f"⚠️ *ማስታወሻ፦ ይህ መረጃ በ AI የተዘጋጀ ለግንዛቤ ብቻ የሚያገለግል ነው። ሁልጊዜ የሐኪምዎን ወይም የፋርማሲስቱን መመሪያ ይከተሉ።*",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+
+    except Exception as e:
+        logging.error(f"Groq AI Error: {e}")
+        await msg.reply_text(
+            f"❌ **መረጃውን መተንተን አልተቻለም!**\n\nስህተት፦ `{str(e)[:150]}`",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+
+    return ConversationHandler.END
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
