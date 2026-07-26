@@ -1,7 +1,8 @@
 import logging
 import os
-import sqlite3
 import threading
+import urllib.parse as urlparse
+import psycopg2
 from flask import Flask
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -16,7 +17,7 @@ from telegram.ext import (
 import google.generativeai as genai
 
 # ==============================================================================
-# 0. FLASK WEB SERVER (ለ RENDER እና UPTIMEROBOT)
+# 0. FLASK WEB SERVER
 # ==============================================================================
 web_app = Flask(__name__)
 
@@ -29,15 +30,14 @@ def run_flask():
     web_app.run(host="0.0.0.0", port=port)
 
 # ==============================================================================
-# 1. CONFIG & DATABASE & GEMINI AI SETUP
+# 1. CONFIG & POSTGRESQL DATABASE & GEMINI AI SETUP
 # ==============================================================================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8697195057:AAEWFLHH8EvXNNc4kCyQMke62CvDz-oYgNc")
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "7030641737"))
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
-# የሎጎ ፎቶ File ID
 LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
 
-# Gemini AI Setup (ቁልፉ በ Render Environment Variable በኩል ይነበባል)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -49,61 +49,93 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
+def get_db_connection():
+    if DATABASE_URL:
+        # postgres:// ከሆነ ወደ postgresql:// መቀየር (ለ psycopg2)
+        db_url = DATABASE_URL.replace("postgres://", "postgresql://", 1) if DATABASE_URL.startswith("postgres://") else DATABASE_URL
+        return psycopg2.connect(db_url)
+    else:
+        # ለ Local Test የሚሆን SQLite fallback
+        import sqlite3
+        return sqlite3.connect("pharmacy_bot.db")
+
 def init_db():
-    conn = sqlite3.connect("pharmacy_bot.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS pharmacies (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            location TEXT NOT NULL,
-            phone TEXT NOT NULL,
-            operating_hours TEXT,
-            license_photo TEXT,
-            is_verified INTEGER DEFAULT 0
-        )
-    """)
-    try:
-        cursor.execute("ALTER TABLE pharmacies ADD COLUMN operating_hours TEXT DEFAULT 'ያልተጠቀሰ'")
-    except sqlite3.OperationalError:
-        pass
-        
+    
+    # PostgreSQL Query
+    if DATABASE_URL:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pharmacies (
+                id SERIAL PRIMARY KEY,
+                chat_id BIGINT NOT NULL,
+                name TEXT NOT NULL,
+                location TEXT NOT NULL,
+                phone TEXT NOT NULL,
+                operating_hours TEXT DEFAULT 'ያልተጠቀሰ',
+                license_photo TEXT,
+                is_verified INTEGER DEFAULT 0
+            )
+        """)
+    else:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pharmacies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                location TEXT NOT NULL,
+                phone TEXT NOT NULL,
+                operating_hours TEXT DEFAULT 'ያልተጠቀሰ',
+                license_photo TEXT,
+                is_verified INTEGER DEFAULT 0
+            )
+        """)
     conn.commit()
     conn.close()
 
 def register_pharmacy_db(chat_id, name, location, phone, operating_hours, license_photo):
-    conn = sqlite3.connect("pharmacy_bot.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified)
-        VALUES (?, ?, ?, ?, ?, ?, 0)
-    """, (chat_id, name, location, phone, operating_hours, license_photo))
-    pharmacy_id = cursor.lastrowid
+    if DATABASE_URL:
+        cursor.execute("""
+            INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified)
+            VALUES (%s, %s, %s, %s, %s, %s, 0) RETURNING id
+        """, (chat_id, name, location, phone, operating_hours, license_photo))
+        pharmacy_id = cursor.fetchone()[0]
+    else:
+        cursor.execute("""
+            INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified)
+            VALUES (?, ?, ?, ?, ?, ?, 0)
+        """, (chat_id, name, location, phone, operating_hours, license_photo))
+        pharmacy_id = cursor.lastrowid
+
     conn.commit()
     conn.close()
     return pharmacy_id
 
 def verify_pharmacy_db(pharmacy_id):
-    conn = sqlite3.connect("pharmacy_bot.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE pharmacies SET is_verified = 1 WHERE id = ?", (pharmacy_id,))
+    placeholder = "%s" if DATABASE_URL else "?"
+    cursor.execute(f"UPDATE pharmacies SET is_verified = 1 WHERE id = {placeholder}", (pharmacy_id,))
     conn.commit()
     conn.close()
 
 def get_pharmacy_info_by_id(pharmacy_id):
-    conn = sqlite3.connect("pharmacy_bot.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT name, location, phone, chat_id, operating_hours FROM pharmacies WHERE id = ?", (pharmacy_id,))
+    placeholder = "%s" if DATABASE_URL else "?"
+    cursor.execute(f"SELECT name, location, phone, chat_id, operating_hours FROM pharmacies WHERE id = {placeholder}", (pharmacy_id,))
     row = cursor.fetchone()
     conn.close()
     return row
 
 def get_verified_pharmacies_by_location(location=None):
-    conn = sqlite3.connect("pharmacy_bot.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     if location:
-        cursor.execute("SELECT chat_id FROM pharmacies WHERE is_verified = 1 AND LOWER(location) LIKE LOWER(?)", (f"%{location}%",))
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"SELECT chat_id FROM pharmacies WHERE is_verified = 1 AND LOWER(location) LIKE LOWER({placeholder})", (f"%{location}%",))
     else:
         cursor.execute("SELECT chat_id FROM pharmacies WHERE is_verified = 1")
     rows = cursor.fetchall()
@@ -111,7 +143,7 @@ def get_verified_pharmacies_by_location(location=None):
     return list(set([r[0] for r in rows]))
 
 def get_all_verified_pharmacies():
-    conn = sqlite3.connect("pharmacy_bot.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT name, location, phone, operating_hours FROM pharmacies WHERE is_verified = 1")
     rows = cursor.fetchall()
@@ -119,7 +151,7 @@ def get_all_verified_pharmacies():
     return rows
 
 def get_bot_statistics():
-    conn = sqlite3.connect("pharmacy_bot.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM pharmacies")
     total_pharmacies = cursor.fetchone()[0]
@@ -269,7 +301,7 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     total, verified, pending = get_bot_statistics()
     stats_text = (
-        f"📊 **የቦቱ ስታቲስቲክስ እና መረጃ**\n\n"
+        f"📊 **የቦቱ ስታቲስቲክስ እና መረጃ (PostgreSQL)**\n\n"
         f"🏥 **ጠቅላላ የተመዘገቡ ፋርማሲዎች፦** {total}\n"
         f"✅ **የተረጋገጡ (ሕጋዊ) ፋርማሲዎች፦** {verified}\n"
         f"⏳ **ማረጋገጫ የሚጠብቁ (Pending)፦** {pending}\n\n"
@@ -427,9 +459,10 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
     customer_id = context.chat_data.get("target_customer_id")
     pharmacy_chat_id = msg.chat_id
 
-    conn = sqlite3.connect("pharmacy_bot.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT name, location, phone, operating_hours FROM pharmacies WHERE chat_id = ? ORDER BY id DESC LIMIT 1", (pharmacy_chat_id,))
+    placeholder = "%s" if DATABASE_URL else "?"
+    cursor.execute(f"SELECT name, location, phone, operating_hours FROM pharmacies WHERE chat_id = {placeholder} ORDER BY id DESC LIMIT 1", (pharmacy_chat_id,))
     pharm_info = cursor.fetchone()
     conn.close()
 
@@ -560,7 +593,7 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📞 **አል-ኑር መድኃኒት አፋላጊ - የደንበኞች ድጋፍ**\n\n"
         "ማንኛውም ጥያቄ ወይም አስተያየት ካለዎት፦\n"
-        "• **ስልክ፦** +251 911 95 95 85\n"
+        "• **ስልክ፦** +251 911 00 00 00\n"
         "• **ቴሌግራም፦** @AlNoorSupport",
         reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
     )
@@ -629,7 +662,7 @@ def main():
 
     app.add_error_handler(error_handler_func)
 
-    print("🤖 አል-ኑር መድኃኒት አፋላጊ ቦት በስኬት ስራ ጀምሯል...")
+    print("🤖 አል-ኑር መድኃኒት አፋላጊ ቦት በ PostgreSQL ዳታቤዝ ስራ ጀምሯል...")
     app.run_polling()
 
 if __name__ == "__main__":
