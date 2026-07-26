@@ -11,8 +11,9 @@ WORKDIR /app
 
 COPY requirements.txt .
 
+# የቆየ Cache እንዳይጠቀም አጽድቶ መጫን
 RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --force-reinstall -r requirements.txt
 
 COPY . .
 
