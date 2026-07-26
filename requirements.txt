@@ -1,6 +1,5 @@
 
-Flask
-fastapi
-uvicorn
-python-telegram-bot
-groq
+
+python-telegram-bot==20.7
+Flask>=3.0.0
+gunicorn>=21.2.0
