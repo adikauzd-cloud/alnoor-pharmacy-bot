@@ -1,7 +1,6 @@
 
 Flask
+google-generativeai
 fastapi
 uvicorn
 python-telegram-bot
-groq
-generativeai as genai
