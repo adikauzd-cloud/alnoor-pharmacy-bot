@@ -31,19 +31,24 @@ def run_flask():
 # ==============================================================================
 # 1. CONFIG & DATABASE & GEMINI AI SETUP
 # ==============================================================================
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8697195057:AAEWFLHH8EvXNNc4kCyQMke62CvDz-oYgNc")
-ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "7030641737"))
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
+ADMIN_CHAT_ID_ENV = os.environ.get("ADMIN_CHAT_ID", "0").strip()
+ADMIN_CHAT_ID = int(ADMIN_CHAT_ID_ENV) if ADMIN_CHAT_ID_ENV.isdigit() else 0
 
-# የሎጎ ፎቶ File ID
-LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
+LOGO_FILE_ID = os.environ.get("LOGO_FILE_ID", "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E")
 
-# Gemini AI Setup (ቁልፉ በ Render Environment Variable በኩል ይነበባል)
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+ai_model = None
+
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        ai_model = genai.GenerativeModel('gemini-1.5-flash')
+        logging.info("✅ Gemini AI model initialized successfully.")
+    except Exception as e:
+        logging.error(f"❌ Failed to initialize Gemini AI: {e}")
 else:
-    ai_model = None
+    logging.warning("⚠️ GEMINI_API_KEY is not set in environment variables.")
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -217,9 +222,20 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if msg.text == "🏠 ወደ ዋና ገጽ":
         return await start(update, context)
 
+    # Check AI availability dynamically
+    global ai_model
+    if not ai_model:
+        current_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        if current_key:
+            try:
+                genai.configure(api_key=current_key)
+                ai_model = genai.GenerativeModel('gemini-1.5-flash')
+            except Exception as e:
+                logging.error(f"Re-init AI failed: {e}")
+
     if not ai_model:
         await msg.reply_text(
-            "⚠️ የ AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
+            "⚠️ የ AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ በ Render Environment Variable ላይ 'GEMINI_API_KEY' በትክክል መሙላቱን ያረጋግጡ።",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         return ConversationHandler.END
@@ -244,6 +260,9 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         elif msg.text:
             response = ai_model.generate_content(f"{prompt}\n\nየመድኃኒቱ ስም፦ {msg.text}")
+        else:
+            await msg.reply_text("❌ እባክዎ ጽሑፍ ወይም ፎቶ ይላኩ።")
+            return ConversationHandler.END
 
         await msg.reply_text(
             f"💡 **የመድኃኒት መረጃ ማብራሪያ፦**\n\n{response.text}\n\n"
@@ -547,10 +566,11 @@ async def reg_get_license(update: Update, context: ContextTypes.DEFAULT_TYPE):
     caption_text = f"🔔 **አዲስ የፋርማሲ ምዝገባ ጥያቄ!**\n\n🏥 **ስም፦** {name}\n📍 **አካባቢ፦** {location}\n📞 **ስልክ፦** {phone}\n🕒 **የስራ ሰዓት፦** {hours}\n\nሕጋዊነቱን አረጋግጠው ይፍቀዱ፦"
 
     try:
-        if is_doc:
-            await context.bot.send_document(chat_id=ADMIN_CHAT_ID, document=photo_file_id, caption=caption_text, parse_mode="Markdown", reply_markup=admin_keyboard)
-        else:
-            await context.bot.send_photo(chat_id=ADMIN_CHAT_ID, photo=photo_file_id, caption=caption_text, parse_mode="Markdown", reply_markup=admin_keyboard)
+        if ADMIN_CHAT_ID != 0:
+            if is_doc:
+                await context.bot.send_document(chat_id=ADMIN_CHAT_ID, document=photo_file_id, caption=caption_text, parse_mode="Markdown", reply_markup=admin_keyboard)
+            else:
+                await context.bot.send_photo(chat_id=ADMIN_CHAT_ID, photo=photo_file_id, caption=caption_text, parse_mode="Markdown", reply_markup=admin_keyboard)
     except Exception as e:
         logging.error(f"ለአድሚን ኖቲፊኬሽን መላክ አልተቻለም፦ {e}")
 
@@ -572,6 +592,10 @@ async def error_handler_func(update: object, context: ContextTypes.DEFAULT_TYPE)
 # 4. MAIN FUNCTION
 # ==============================================================================
 def main():
+    if not BOT_TOKEN:
+        print("❌ CRITICAL ERROR: BOT_TOKEN is missing in environment variables!")
+        return
+
     init_db()
     threading.Thread(target=run_flask, daemon=True).start()
 
