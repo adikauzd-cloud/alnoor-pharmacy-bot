@@ -37,6 +37,14 @@ ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "7030641737"))
 # የሎጎ ፎቶ File ID
 LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
 
+# Gemini AI Setup (ቁልፉ በ Render Environment Variable በኩል ይነበባል)
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    ai_model = None
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -555,7 +563,7 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📞 **አል-ኑር መድኃኒት አፋላጊ - የደንበኞች ድጋፍ**\n\n"
         "ማንኛውም ጥያቄ ወይም አስተያየት ካለዎት፦\n"
-        "• **ስልክ፦** +251 911 95 95 85\n"
+        "• **ስልክ፦** +251 911 00 00 00\n"
         "• **ቴሌግራም፦** @AlNoorSupport",
         reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
     )
