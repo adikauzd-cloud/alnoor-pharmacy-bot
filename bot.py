@@ -397,9 +397,7 @@ async def handle_pharmacy_response(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     await query.answer()
     data = query.data
-    
-    # rsplit("_", 1) በመጠቀም ከመጨረሻው underline ብቻ ይለያል
-    action, customer_id = data.rsplit("_", 1)
+    action, customer_id = data.split("_")
     context.chat_data["target_customer_id"] = customer_id
 
     if action == "available":
@@ -413,7 +411,6 @@ async def handle_pharmacy_response(update: Update, context: ContextTypes.DEFAULT
         except Exception:
             await query.edit_message_text(text=msg_text)
         return WAITING_FOR_PRICE
-
     elif action == "not_available":
         try:
             await query.edit_message_caption(caption="❌ 'የለኝም' የሚለው ምላሽዎ ተመዝግቧል።")
