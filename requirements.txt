@@ -1,4 +1,6 @@
-python-telegram-bot
+
 Flask
-google-generativeai
-pip install groq
+fastapi
+uvicorn
+python-telegram-bot
+groq
