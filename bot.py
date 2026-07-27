@@ -377,7 +377,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
     if not msg:
         return ConversationHandler.END
 
-    # 🛑 ጥበቃ፦ የተላከው ጽሑፍ የሜኑ አዝራር ከሆነ ፍለጋውን ሰርዞ አዲስ ጥያቄ እንደሆነ ያስተናግደዋል
+    # 🛑 እዚህ ጋር 4 Spaces ብቻ መሆን አለበት (ተጨማሪ ክፍተት እንዳይኖር)
     if msg.text:
         menu_items = [
             "🔍 መድኃኒት ፈልግ", "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ",
@@ -390,7 +390,6 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
             else:
                 await start(update, context)
                 return ConversationHandler.END
-
     user = update.effective_user
     user_loc = context.user_data.get('user_location')
     verified_pharmacies = get_verified_pharmacies_by_location(user_loc) if user_loc else []
