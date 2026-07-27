@@ -1,6 +1,5 @@
 python-telegram-bot
+flask
+psycopg2-binary
 google-generativeai
-Flask
-gunicorn==21.2.0
-Pillow>=10.0.0
-psycopg2-binary>=2.9.9
+Pillow
