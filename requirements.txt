@@ -3,5 +3,4 @@ flask
 psycopg2-binary
 google-generativeai
 
-fastapi
 
