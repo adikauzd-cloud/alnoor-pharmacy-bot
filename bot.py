@@ -41,9 +41,10 @@ if not BOT_TOKEN:
 
 LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+# DeepSeek Configuration
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -227,21 +228,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==============================================================================
-# 🤖 AI Handler (Groq - የተስተካከለ)
+# 🤖 AI Handler (DeepSeek)
 # ==============================================================================
 
-async def analyze_with_groq(prompt, text=None, image_bytes=None):
-    """Groq API በመጠቀም መድሃኒት ተንትን"""
+async def analyze_with_deepseek(prompt, text=None, image_bytes=None):
+    """DeepSeek API በመጠቀም መድሃኒት ተንትን"""
     
-    if not GROQ_API_KEY:
-        return "⚠️ የGroq AI አገልግሎት ቁልፍ አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
+    if not DEEPSEEK_API_KEY:
+        return "⚠️ የDeepSeek AI አገልግሎት ቁልፍ አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
     
     try:
-        # ✅ የጥያቄ ይዘት ማዘጋጀት - ትክክለኛው መንገድ
         if text:
             user_content = f"{prompt}\n\nየመድኃኒቱ ስም፦ {text}"
         elif image_bytes:
-            user_content = f"{prompt}\n\n[ማሳሰቢያ: የፎቶ ምስል ተልኳል፣ ነገር ግን Groq ምስሎችን በቀጥታ ማየት አይችልም። እባክዎ የመድሃኒቱን ስም በጽሁፍ ይጻፉልን።]"
+            # DeepSeek ምስሎችን አይደግፍም
+            return "📷 ማሳሰቢያ፦ DeepSeek AI ምስሎችን በቀጥታ ማየት አይችልም። እባክዎ የመድኃኒቱን ስም በጽሁፍ ይጻፉልን።"
         else:
             return "❌ ምንም መረጃ አልተላከም።"
         
@@ -251,24 +252,27 @@ async def analyze_with_groq(prompt, text=None, image_bytes=None):
         ]
         
         headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
             "Content-Type": "application/json"
         }
         
         payload = {
-            "model": GROQ_MODEL,
+            "model": DEEPSEEK_MODEL,
             "messages": messages,
             "temperature": 0.7,
             "max_tokens": 1024
         }
         
-        response = requests.post(GROQ_API_URL, json=payload, headers=headers, timeout=30)
+        response = requests.post(DEEPSEEK_API_URL, json=payload, headers=headers, timeout=30)
         
-        # ✅ የተሻሻለ የስህተት አያያዝ
         if response.status_code != 200:
             error_detail = response.text
-            logging.error(f"Groq API Error {response.status_code}: {error_detail}")
-            return f"❌ የGroq API ስህተት፦ {response.status_code}\n\n{error_detail[:200]}"
+            logging.error(f"DeepSeek API Error {response.status_code}: {error_detail}")
+            
+            if "decommissioned" in error_detail:
+                return "⚠️ የሞዴሉ ስሪት ተቋርጧል። እባክዎ አስተዳዳሪውን ያግኙ።"
+            else:
+                return f"❌ የDeepSeek API ስህተት፦ {response.status_code}"
         
         result = response.json()
         return result['choices'][0]['message']['content']
@@ -276,9 +280,9 @@ async def analyze_with_groq(prompt, text=None, image_bytes=None):
     except requests.exceptions.Timeout:
         return "⏱️ የጊዜ ገደብ አልፏል። እባክዎ እንደገና ይሞክሩ።"
     except requests.exceptions.HTTPError as e:
-        return f"❌ የGroq API ስህተት፦ {e.response.status_code}"
+        return f"❌ የDeepSeek API ስህተት፦ {e.response.status_code}"
     except Exception as e:
-        logging.error(f"Groq API error: {e}")
+        logging.error(f"DeepSeek API error: {e}")
         return f"❌ መረጃውን መተንተን አልተቻለም። {str(e)[:100]}"
 
 # ----------------- AI የመድኃኒት መረጃ ማብራሪያ SECTION -----------------
@@ -302,9 +306,9 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if msg.text == "🏠 ወደ ዋና ገጽ":
         return await start(update, context)
 
-    if not GROQ_API_KEY:
+    if not DEEPSEEK_API_KEY:
         await msg.reply_text(
-            "⚠️ የ Groq AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
+            "⚠️ የ DeepSeek AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         return ConversationHandler.END
@@ -327,17 +331,14 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if msg.photo:
             photo_file = await msg.photo[-1].get_file()
             image_bytes = await photo_file.download_as_bytearray()
-            # Groq ምስል አይደግፍም ስለዚህ መልእክት እንላካለን
             await msg.reply_text(
-                "📷 ማሳሰቢያ፦ Groq AI ምስሎችን በቀጥታ ማየት አይችልም። የመድኃኒቱን ስም በጽሁፍ ቢጽፉልን የተሻለ መረጃ ልንሰጥዎ እንችላለን።"
+                "📷 ማሳሰቢያ፦ DeepSeek AI ምስሎችን በቀጥታ ማየት አይችልም። የመድኃኒቱን ስም በጽሁፍ ቢጽፉልን የተሻለ መረጃ ልንሰጥዎ እንችላለን።"
             )
-            # ✅ ትክክለኛው ጥሪ - text=None እና image_bytes በመጠቀም
-            response_text = await analyze_with_groq(prompt, text=None, image_bytes=image_bytes)
+            response_text = await analyze_with_deepseek(prompt, text=None, image_bytes=image_bytes)
             
         elif msg.text:
             text = msg.text
-            # ✅ ትክክለኛው ጥሪ - text እና image_bytes=None በመጠቀም
-            response_text = await analyze_with_groq(prompt, text=text, image_bytes=None)
+            response_text = await analyze_with_deepseek(prompt, text=text, image_bytes=None)
         else:
             await msg.reply_text(
                 "❌ የላኩት ግብዓት ስላልገባኝ ድጋሚ ይሞክሩ።",
@@ -352,7 +353,7 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
     except Exception as e:
-        logging.error(f"Groq error: {e}")
+        logging.error(f"DeepSeek error: {e}")
         await msg.reply_text(
             f"❌ መረጃውን መተንተን አልተቻለም።\n\n`{str(e)[:200]}`",
             parse_mode="Markdown",
