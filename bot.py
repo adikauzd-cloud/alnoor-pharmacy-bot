@@ -655,6 +655,21 @@ async def reg_get_license(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"ለአድሚን ኖቲፊኬሽን መላክ አልተቻለም፦ {e}")
 
     return ConversationHandler.END
+    search_conv = ConversationHandler(
+    entry_points=[MessageHandler(filters.Regex("^🔍 መድኃኒት ፈልግ$"), prompt_search)],
+    states={
+        WAITING_FOR_SEARCH: [
+            MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start),
+            # ተጠቃሚው በስህተት ዋና የሜኑ አዝራሮችን ቢጫን ውይይቱን ያቋርጣል
+            MessageHandler(filters.Regex("^(🔍 መድኃኒት ፈልግ|📍 አካባቢ ምረጥ|📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ|📋 የፋርማሲዎች ዝርዝር|🏥 ፋርማሲ መዝግብ|📞 እገዛ / ድጋፍ)$"), start),
+            MessageHandler(filters.ALL & ~filters.COMMAND, handle_customer_request)
+        ]
+    },
+    fallbacks=[
+        CommandHandler("start", start),
+        MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)
+    ]
+)
 
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
