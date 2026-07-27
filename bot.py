@@ -34,21 +34,47 @@ def run_flask():
 # ==============================================================================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8697195057:AAEWFLHH8EvXNNc4kCyQMke62CvDz-oYgNc")
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "7030641737"))
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://alnoor-pharmacy-bot-3.onrender.com")
 
-LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
+# 2. telegram_app እዚሁ ላይ ይፈጠራል! (ከ Handlers በፊት)
+telegram_app = Application.builder().token(BOT_TOKEN).build()
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
-else:
-    ai_model = None
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+# 3. በመቀጠል ሁሉም async def functions ይጻፋሉ (start, prompt_search, admin_stats, ወዘተ...)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ...
+    pass
 
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ...
+    pass
+
+# ... (ሌሎች functions) ...
+
+
+# 4. ከ Functions በኋላ Handlers ለ telegram_app ይመዘገባሉ
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(CommandHandler("stats", admin_stats))
+# ... (ሌሎች handlers) ...
+
+
+# 5. በመጨረሻ FastAPI እና Webhook ክፍል ይጻፋል
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    await telegram_app.initialize()
+    await telegram_app.start()
+    
+    webhook_target = f"{WEBHOOK_URL.rstrip('/')}/webhook"
+    await telegram_app.bot.set_webhook(url=webhook_target)
+    logging.info(f"✅ Webhook set to: {webhook_target}")
+    
+    yield
+    
+    await telegram_app.stop()
+    await telegram_app.shutdown()
+
+app = FastAPI(lifespan=lifespan)
 def get_db_connection():
     if DATABASE_URL:
         # postgres:// ከሆነ ወደ postgresql:// መቀየር (ለ psycopg2)
