@@ -481,6 +481,28 @@ loc_conv = ConversationHandler(
         MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)
     ]
 )
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ ይቅርታ! ይህንን ትዕዛዝ መጠቀም የሚችለው አድሚኑ ብቻ ነው።")
+        return
+    total, verified, pending = get_bot_statistics()
+    stats_text = (
+        f"📊 **የቦቱ ስታቲስቲክስ እና መረጃ**\n\n"
+        f"🏥 **ጠቅላላ የተመዘገቡ ፋርማሲዎች፦** {total}\n"
+        f"✅ **የተረጋገጡ (ሕጋዊ) ፋርማሲዎች፦** {verified}\n"
+        f"⏳ **ማረጋገጫ የሚጠብቁ (Pending)፦** {pending}\n\n"
+        f"━━━━━━━━━━━━━━━\n🤖 *አል-ኑር መድኃኒት አፋላጊ ሲስተም*"
+    )
+    await update.message.reply_text(stats_text, parse_mode="Markdown")
+
+
+# 2. ሁለተኛው ደረጃ፡ Function ከተጻፈ በኋላ Handler ይመዘገባል
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(CommandHandler("stats", admin_stats))  # <--- admin_stats ከላይ ስላለ አሁን ስህተት አይፈጥርም!
+telegram_app.add_handler(MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start))
+telegram_app.add_handler(MessageHandler(filters.Regex("^📞 እገዛ / ድጋፍ$"), show_help))
+telegram_app.add_handler(MessageHandler(filters.Regex("^📋 የፋርማሲዎች ዝርዝር$"), list_pharmacies))
+telegram_app.add_handler(CallbackQueryHandler(handle_admin_approval, pattern="^verify_"))
 async def handle_admin_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
