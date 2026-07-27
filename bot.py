@@ -13,8 +13,8 @@ from telegram.ext import (
     ConversationHandler,
     filters,
 )
-import google.generativeai as genai
 
+import httpx
 # ==============================================================================
 # 0. FLASK WEB SERVER
 # ==============================================================================
@@ -40,10 +40,12 @@ if not BOT_TOKEN:
 
 LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "mixtral-8x7b-32768")  # ወይም "llama3-70b-8192"
+
+# Groq API endpoint
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 else:
     ai_model = None
 
@@ -241,6 +243,60 @@ async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return WAITING_FOR_MED_INFO
 
+# ==============================================================================
+# 🤖 AI Handler (Groq)
+# ==============================================================================
+
+async def analyze_with_groq(prompt, image_bytes=None):
+    """Groq API በመጠቀም መድሃኒት ተንትን"""
+    
+    if not GROQ_API_KEY:
+        return "⚠️ የGroq AI አገልግሎት ቁልፍ አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
+    
+    try:
+        # ለፎቶ የተለየ አያያዝ (Groq በአሁኑ ጊዜ ቀጥታ ፎቶ አይደግፍም)
+        if image_bytes:
+            # ፎቶ ከሆነ መረጃውን በጽሁፍ ለመቀየር ማሳሰቢያ
+            user_content = f"{prompt}\n\n[ማሳሰቢያ: የፎቶ ምስል ተልኳል፣ ነገር ግን Groq ምስሎችን በቀጥታ ማየት አይችልም። እባክዎ የመድሃኒቱን ስም በጽሁፍ ይጻፉልን ወይም ሌላ AI አገልግሎት ይጠቀሙ።]"
+        else:
+            user_content = f"{prompt}\n\nየመድኃኒቱ ስም፦ {text}"
+        
+        messages = [
+            {"role": "system", "content": "አንተ የመድሃኒት ባለሙያ ነህ። መረጃህን በአማርኛ ስጥ።"},
+            {"role": "user", "content": user_content}
+        ]
+        
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": GROQ_MODEL,
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 1024
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(GROQ_API_URL, json=payload, headers=headers)
+            response.raise_for_status()
+            result = response.json()
+            return result['choices'][0]['message']['content']
+            
+    except httpx.TimeoutException:
+        return "⏱️ የጊዜ ገደብ አልፏል። እባክዎ እንደገና ይሞክሩ።"
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            return "⚠️ የGroq API ቁልፍ ትክክል አይደለም። እባክዎ ያረጋግጡ።"
+        elif e.response.status_code == 429:
+            return "⏳ የጥያቄ ገደብ አልፏል። እባክዎ ትንሽ ቆይተው ይሞክሩ።"
+        else:
+            return f"❌ የGroq API ስህተት፦ {e.response.status_code}"
+    except Exception as e:
+        logging.error(f"Groq API error: {e}")
+        return f"❌ መረጃውን መተንተን አልተቻለም።"
+
 async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg:
@@ -249,9 +305,9 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if msg.text == "🏠 ወደ ዋና ገጽ":
         return await start(update, context)
 
-    if not ai_model:
+    if not GROQ_API_KEY:
         await msg.reply_text(
-            "⚠️ የ AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
+            "⚠️ የ Groq AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         return ConversationHandler.END
@@ -268,14 +324,22 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
+        image_bytes = None
+        text = None
+        
         if msg.photo:
             photo_file = await msg.photo[-1].get_file()
-            photo_bytes = await photo_file.download_as_bytearray()
-            image_part = {"mime_type": "image/jpeg", "data": bytes(photo_bytes)}
-            response = ai_model.generate_content([prompt, image_part])
-
+            image_bytes = await photo_file.download_as_bytearray()
+            # Groq ምስል አይደግፍም ስለዚህ መልእክት እንላካለን
+            await msg.reply_text(
+                "📷 ማሳሰቢያ፦ Groq AI ምስሎችን በቀጥታ ማየት አይችልም። የመድኃኒቱን ስም በጽሁፍ ቢጽፉልን የተሻለ መረጃ ልንሰጥዎ እንችላለን።"
+            )
+            # ለፎቶ ቢሆንም እንደ ጽሁፍ አያያዝ እናደርጋለን
+            response_text = await analyze_with_groq(prompt, image_bytes)
+            
         elif msg.text:
-            response = ai_model.generate_content(f"{prompt}\n\nየመድኃኒቱ ስም፦ {msg.text}")
+            text = msg.text
+            response_text = await analyze_with_groq(prompt, text)
         else:
             await msg.reply_text(
                 "❌ የላኩት ግብዓት ስላልገባኝ ድጋሚ ይሞክሩ።",
@@ -284,20 +348,19 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return ConversationHandler.END
 
         await msg.reply_text(
-            f"💡 የመድኃኒት መረጃ ማብራሪያ፦\n\n{response.text}\n\n"
+            f"💡 የመድኃኒት መረጃ ማብራሪያ፦\n\n{response_text}\n\n"
             f"⚠️ *ማስታወሻ፦ ይህ መረጃ በ AI የተዘጋጀ ለግንዛቤ ብቻ የሚያገለግል ነው። ሁልጊዜ የሐኪምዎን ወይም የፋርማሲስቱን መመሪያ ይከተሉ።*",
             parse_mode="Markdown",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
     except Exception as e:
-        logging.error(f"AI error: {e}")
+        logging.error(f"Groq error: {e}")
         await msg.reply_text(
             "❌ መረጃውን መተንተን አልተቻለም። እባክዎ የምስሉ ጥራት ጥሩ መሆኑን ያረጋግጡ ወይም የመድኃኒቱን ስም በጽሑፍ ይጻፉልን።",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
 
     return ConversationHandler.END
-
 # ----------------- ADMIN & OTHERS -----------------
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
