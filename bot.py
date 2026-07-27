@@ -287,12 +287,26 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
-    except Exception as e:
-        logging.error(f"AI error: {e}")
-        await msg.reply_text(
-            "❌ መረጃውን መተንተን አልተቻለም። እባክዎ የምስሉ ጥራት ጥሩ መሆኑን ያረጋግጡ ወይም የመድኃኒቱን ስም በጽሑፍ ይጻፉልን።",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
+    # analyze_med_info ውስጥ ያለውን የስህተት መልእክት አሻሽል
+except Exception as e:
+    error_msg = str(e)
+    logging.error(f"AI Analysis Error: {error_msg}")
+    
+    # ለተጠቃሚ ግልጽ መልእክት
+    if "API key" in error_msg:
+        user_msg = "⚠️ የAI አገልግሎት ቁልፍ ችግር አለ። እባክዎ አስተዳዳሪውን ያግኙ።"
+    elif "quota" in error_msg.lower():
+        user_msg = "⏳ የዕለት ጥቅም ገደብ አልፏል። እባክዎ በኋላ ይሞክሩ።"
+    elif "image" in error_msg.lower() or "photo" in error_msg.lower():
+        user_msg = "📷 የምስሉ ጥራት ጥሩ አይደለም። እባክዎ ግልጽ የሆነ ፎቶ ይላኩ ወይም የመድኃኒቱን ስም በጽሑፍ ይጻፉ።"
+    else:
+        user_msg = "❌ መረጃውን መተንተን አልተቻለም!"
+    
+    await wait_msg.edit_text(
+        f"{user_msg}\n\n📝 *ዝርዝር መረጃ፦*\n`{error_msg[:150]}`",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+    )
 
     return ConversationHandler.END
 
