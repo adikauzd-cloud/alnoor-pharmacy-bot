@@ -1,8 +1,10 @@
 import logging
 import os
 import threading
+import io
 import urllib.parse as urlparse
 import psycopg2
+from PIL import Image
 from flask import Flask
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -30,7 +32,7 @@ def run_flask():
     web_app.run(host="0.0.0.0", port=port)
 
 # ==============================================================================
-# 1. CONFIG & POSTGRESQL DATABASE & GEMINI AI SETUP
+# 1. CONFIG & POSTGRESQL DATABASE SETUP
 # ==============================================================================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8697195057:AAEWFLHH8EvXNNc4kCyQMke62CvDz-oYgNc")
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "7030641737"))
@@ -38,24 +40,15 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
-else:
-    ai_model = None
-
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
 def get_db_connection():
     if DATABASE_URL:
-        # postgres:// ከሆነ ወደ postgresql:// መቀየር (ለ psycopg2)
         db_url = DATABASE_URL.replace("postgres://", "postgresql://", 1) if DATABASE_URL.startswith("postgres://") else DATABASE_URL
         return psycopg2.connect(db_url)
     else:
-        # ለ Local Test የሚሆን SQLite fallback
         import sqlite3
         return sqlite3.connect("pharmacy_bot.db")
 
@@ -63,7 +56,6 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # PostgreSQL Query
     if DATABASE_URL:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS pharmacies (
@@ -229,7 +221,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     return ConversationHandler.END
 
-# ----------------- AI የመድኃኒት መረጃ ማብራሪያ SECTION -----------------
+# ----------------- AI የመድኃኒት መረጃ ማብራሪያ (GEMINI 2.5 PRO / FLASH) -----------------
 async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📖 **ስለ ታዘዘልዎት መድኃኒት መረጃ ማወቂያ**\n\n"
@@ -249,14 +241,15 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if msg.text == "🏠 ወደ ዋና ገጽ":
         return await start(update, context)
 
-    if not ai_model:
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
         await msg.reply_text(
-            "⚠️ የ AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
+            "⚠️ የ GEMINI_API_KEY አልተዘጋጀም! እባክዎ በ Render Environment Variables ላይ ያስገቡ።",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         return ConversationHandler.END
 
-    await msg.reply_text("⏳ **መረጃው በ AI በመተንተን ላይ ነው... እባክዎ ትንሽ ይጠብቁ...**")
+    status_msg = await msg.reply_text("⏳ **መረጃው በ AI በመተንተን ላይ ነው... እባክዎ ትንሽ ይጠብቁ...**", parse_mode="Markdown")
 
     prompt = (
         "እባክህ የዚህን መድኃኒት ወይም የሐኪም ማዘዣ ፎቶ መዝገብ ተንትነህ በሚከተለው መልኩ በአማርኛ አብራራ፦\n"
@@ -268,26 +261,32 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
+        genai.configure(api_key=api_key)
+        
+        # ለከፍተኛ ጥራት gemini-1.5-pro ወይም gemini-1.5-flash መጠቀም ትችላለህ
+        # Gemini 2.5 Pro ለማድረግ 'gemini-1.5-pro' የሚለውን 'gemini-2.5-pro' ማድረግ ትችላለህ
+        ai_model = genai.GenerativeModel('gemini-1.5-pro')
+
         if msg.photo:
             photo_file = await msg.photo[-1].get_file()
             photo_bytes = await photo_file.download_as_bytearray()
-            image_part = {"mime_type": "image/jpeg", "data": bytes(photo_bytes)}
-            response = ai_model.generate_content([prompt, image_part])
+            img = Image.open(io.BytesIO(photo_bytes))
+            
+            response = ai_model.generate_content([prompt, img])
             
         elif msg.text:
             response = ai_model.generate_content(f"{prompt}\n\nየመድኃኒቱ ስም፦ {msg.text}")
 
-        await msg.reply_text(
+        await status_msg.edit_text(
             f"💡 **የመድኃኒት መረጃ ማብራሪያ፦**\n\n{response.text}\n\n"
             f"⚠️ *ማስታወሻ፦ ይህ መረጃ በ AI የተዘጋጀ ለግንዛቤ ብቻ የሚያገለግል ነው። ሁልጊዜ የሐኪምዎን ወይም የፋርማሲስቱን መመሪያ ይከተሉ።*",
-            parse_mode="Markdown",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            parse_mode="Markdown"
         )
     except Exception as e:
-        logging.error(f"AI error: {e}")
-        await msg.reply_text(
-            "❌ መረጃውን መተንተን አልተቻለም። እባክዎ የምስሉ ጥራት ጥሩ መሆኑን ያረጋግጡ ወይም የመድኃኒቱን ስም በጽሑፍ ይጻፉልን።",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        logging.error(f"AI processing error: {e}")
+        await status_msg.edit_text(
+            f"❌ **መረጃውን መተንተን አልተቻለም!**\n\n`{str(e)[:150]}`\n\nእባክዎ የምስሉ ጥራት ጥሩ መሆኑን ያረጋግጡ ወይም እንደገና ይሞክሩ።",
+            parse_mode="Markdown"
         )
 
     return ConversationHandler.END
