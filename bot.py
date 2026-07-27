@@ -364,19 +364,10 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
     if not msg:
         return ConversationHandler.END
 
-    # 🛑 ጥበቃ፦ የተላከው ጽሑፍ የሜኑ አዝራር ከሆነ ፍለጋውን ሰርዞ አዲስ ጥያቄ እንደሆነ ያስተናግደዋል
-    if msg.text:
-        menu_items = [
-            "🔍 መድኃኒት ፈልግ", "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ",
-            "📍 አካባቢ ምረጥ", "📋 የፋርማሲዎች ዝርዝር",
-            "🏥 ፋርማሲ መዝግብ", "📞 እገዛ / ድጋፍ", "🏠 ወደ ዋና ገጽ"
-        ]
-        if msg.text in menu_items:
-            if msg.text == "🔍 መድኃኒት ፈልግ":
-                return await prompt_search(update, context)
-            else:
-                await start(update, context)
-                return ConversationHandler.END
+    # 🛡️ የሜኑ አዝራር ከሆነ በሌላ ቦታ ይታከላል
+    # (ነገር ግን እዚህ ላይ እንደ ጥበቃ እንቆይ)
+    if msg.text and msg.text in MENU_BUTTONS:
+        return await handle_menu_buttons(update, context)
 
     user = update.effective_user
     user_loc = context.user_data.get('user_location')
@@ -426,7 +417,6 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
                 logging.error(f"Pharmacy notify error: {e}")
 
     return ConversationHandler.END
-
 # 🛑 የተስተካከለው ConversationHandler
 search_conv = ConversationHandler(
     entry_points=[MessageHandler(filters.Regex("^🔍 መድኃኒት ፈልግ$"), prompt_search)],
