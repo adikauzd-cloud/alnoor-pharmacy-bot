@@ -2,6 +2,6 @@ python-telegram-bot
 flask
 psycopg2-binary
 google-generativeai
-Pillow
+
 fastapi
-uvicorn
+
