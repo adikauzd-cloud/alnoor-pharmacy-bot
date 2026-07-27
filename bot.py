@@ -2,6 +2,7 @@ import logging
 import os
 import threading
 import psycopg2
+import requests  # 🔄 httpx ን ወደ requests ቀይር
 from flask import Flask
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -14,7 +15,6 @@ from telegram.ext import (
     filters,
 )
 
-import httpx
 # ==============================================================================
 # 0. FLASK WEB SERVER
 # ==============================================================================
@@ -40,19 +40,22 @@ if not BOT_TOKEN:
 
 LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
 
-
+# Groq Configuration
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "mixtral-8x7b-32768")  # ወይም "llama3-70b-8192"
-
-# Groq API endpoint
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "mixtral-8x7b-32768")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-else:
-    ai_model = None
+
+# ✅ የተስተካከለ - ይህን አስወግድ
+# else:
+#     ai_model = None
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
+# ==============================================================================
+# DATABASE FUNCTIONS (አልተለወጠም)
+# ==============================================================================
 def get_db_connection():
     if DATABASE_URL:
         db_url = DATABASE_URL.replace("postgres://", "postgresql://", 1) if DATABASE_URL.startswith("postgres://") else DATABASE_URL
@@ -230,34 +233,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     return ConversationHandler.END
 
-# ----------------- AI የመድኃኒት መረጃ ማብራሪያ SECTION -----------------
-
-async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📖 ስለ ታዘዘልዎት መድኃኒት መረጃ ማወቂያ\n\n"
-        "እባክዎ ስለ መድኃኒቱ መረጃ ለማግኘት፦\n"
-        "1. የመድኃኒቱን ስም በጽሑፍ ይጻፉልን፡ ወይም\n"
-        "2. የሐኪም ማዘዣውን (Prescription) ፎቶ አንስተው ይላኩልን።\n\n"
-        "🤖 *AI መድኃኒቱ ለምን እንደሚያገለግል፣ አወሳሰዱን እና ጥንቃቄዎችን ያብራራልዎታል።*",
-        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-    )
-    return WAITING_FOR_MED_INFO
-
 # ==============================================================================
-# 🤖 AI Handler (Groq)
+# 🤖 AI Handler (Groq - የተስተካከለ)
 # ==============================================================================
 
-async def analyze_with_groq(prompt, image_bytes=None):
+async def analyze_with_groq(prompt, text=None, image_bytes=None):
     """Groq API በመጠቀም መድሃኒት ተንትን"""
     
     if not GROQ_API_KEY:
         return "⚠️ የGroq AI አገልግሎት ቁልፍ አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
     
     try:
-        # ለፎቶ የተለየ አያያዝ (Groq በአሁኑ ጊዜ ቀጥታ ፎቶ አይደግፍም)
+        # ለፎቶ የተለየ አያያዝ
         if image_bytes:
-            # ፎቶ ከሆነ መረጃውን በጽሁፍ ለመቀየር ማሳሰቢያ
-            user_content = f"{prompt}\n\n[ማሳሰቢያ: የፎቶ ምስል ተልኳል፣ ነገር ግን Groq ምስሎችን በቀጥታ ማየት አይችልም። እባክዎ የመድሃኒቱን ስም በጽሁፍ ይጻፉልን ወይም ሌላ AI አገልግሎት ይጠቀሙ።]"
+            user_content = f"{prompt}\n\n[ማሳሰቢያ: የፎቶ ምስል ተልኳል፣ ነገር ግን Groq ምስሎችን በቀጥታ ማየት አይችልም። እባክዎ የመድሃኒቱን ስም በጽሁፍ ይጻፉልን።]"
         else:
             user_content = f"{prompt}\n\nየመድኃኒቱ ስም፦ {text}"
         
@@ -278,15 +267,15 @@ async def analyze_with_groq(prompt, image_bytes=None):
             "max_tokens": 1024
         }
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(GROQ_API_URL, json=payload, headers=headers)
-            response.raise_for_status()
-            result = response.json()
-            return result['choices'][0]['message']['content']
+        # 🔄 httpx ን ወደ requests ቀይር
+        response = requests.post(GROQ_API_URL, json=payload, headers=headers, timeout=30)
+        response.raise_for_status()
+        result = response.json()
+        return result['choices'][0]['message']['content']
             
-    except httpx.TimeoutException:
+    except requests.exceptions.Timeout:
         return "⏱️ የጊዜ ገደብ አልፏል። እባክዎ እንደገና ይሞክሩ።"
-    except httpx.HTTPStatusError as e:
+    except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
             return "⚠️ የGroq API ቁልፍ ትክክል አይደለም። እባክዎ ያረጋግጡ።"
         elif e.response.status_code == 429:
@@ -296,6 +285,19 @@ async def analyze_with_groq(prompt, image_bytes=None):
     except Exception as e:
         logging.error(f"Groq API error: {e}")
         return f"❌ መረጃውን መተንተን አልተቻለም።"
+
+# ----------------- AI የመድኃኒት መረጃ ማብራሪያ SECTION -----------------
+
+async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📖 ስለ ታዘዘልዎት መድኃኒት መረጃ ማወቂያ\n\n"
+        "እባክዎ ስለ መድኃኒቱ መረጃ ለማግኘት፦\n"
+        "1. የመድኃኒቱን ስም በጽሑፍ ይጻፉልን፡ ወይም\n"
+        "2. የሐኪም ማዘዣውን (Prescription) ፎቶ አንስተው ይላኩልን።\n\n"
+        "🤖 *AI መድኃኒቱ ለምን እንደሚያገለግል፣ አወሳሰዱን እና ጥንቃቄዎችን ያብራራልዎታል።*",
+        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+    )
+    return WAITING_FOR_MED_INFO
 
 async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
@@ -330,16 +332,14 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if msg.photo:
             photo_file = await msg.photo[-1].get_file()
             image_bytes = await photo_file.download_as_bytearray()
-            # Groq ምስል አይደግፍም ስለዚህ መልእክት እንላካለን
             await msg.reply_text(
                 "📷 ማሳሰቢያ፦ Groq AI ምስሎችን በቀጥታ ማየት አይችልም። የመድኃኒቱን ስም በጽሁፍ ቢጽፉልን የተሻለ መረጃ ልንሰጥዎ እንችላለን።"
             )
-            # ለፎቶ ቢሆንም እንደ ጽሁፍ አያያዝ እናደርጋለን
-            response_text = await analyze_with_groq(prompt, image_bytes)
+            response_text = await analyze_with_groq(prompt, text=None, image_bytes=image_bytes)
             
         elif msg.text:
             text = msg.text
-            response_text = await analyze_with_groq(prompt, text)
+            response_text = await analyze_with_groq(prompt, text=text, image_bytes=None)
         else:
             await msg.reply_text(
                 "❌ የላኩት ግብዓት ስላልገባኝ ድጋሚ ይሞክሩ።",
@@ -361,7 +361,10 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     return ConversationHandler.END
-# ----------------- ADMIN & OTHERS -----------------
+
+# ==============================================================================
+# የቀሩት ሁሉም HANDLERS (አልተለወጡም)
+# ==============================================================================
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_CHAT_ID:
@@ -438,16 +441,14 @@ async def prompt_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return WAITING_FOR_SEARCH
 
 # ============================================
-# 📝 የተስተካከለው handle_customer_request
+# 📝 handle_customer_request
 # ============================================
 async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg:
         return ConversationHandler.END
 
-    # 🛑 በጣም አስፈላጊ: የሜኑ አዝራሮችን ማጣራት
     if msg.text:
-        # ሁሉንም የሜኑ አዝራሮች ዝርዝር
         menu_buttons = [
             "🔍 መድኃኒት ፈልግ",
             "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ",
@@ -458,19 +459,13 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
             "🏠 ወደ ዋና ገጽ"
         ]
         
-        # ተጠቃሚው የላከው የሜኑ አዝራር ከሆነ
         if msg.text in menu_buttons:
-            # "መድኃኒት ፈልግ" ከሆነ ወደ ፍለጋ እንሂድ
             if msg.text == "🔍 መድኃኒት ፈልግ":
                 return await prompt_search(update, context)
             else:
-                # ሌሎች አዝራሮች ከሆነ እንደ መድሃኒት አትቁጠር
                 await start(update, context)
                 return ConversationHandler.END
 
-    # 🟢 ከዚህ በታች ያለው ኮድ የሚሰራው ተጠቃሚው ሜኑ አዝራር ሳይሆን
-    # ትክክለኛ የመድኃኒት ስም ወይም ፎቶ ሲልክ ብቻ ነው!
-    
     user = update.effective_user
     user_loc = context.user_data.get('user_location')
     verified_pharmacies = get_verified_pharmacies_by_location(user_loc) if user_loc else []
@@ -525,7 +520,6 @@ async def handle_pharmacy_response(update: Update, context: ContextTypes.DEFAULT
     await query.answer()
     data = query.data
 
-    # 🔴 BUG FIX: rsplit("_", 1) በመጠቀም ከመጨረሻው አንድ ጊዜ ብቻ በመክፈል
     action, customer_id = data.rsplit("_", 1)
     context.chat_data["target_customer_id"] = customer_id
 
@@ -756,7 +750,6 @@ def main():
     app.add_handler(pharmacy_reply_conv)
     app.add_handler(pharmacy_conv)
 
-    # 🔴 ORDER FIX: "🏠 ወደ ዋና ገጽ" ከ Conversation Handler-ዎቹ በኋላ
     app.add_handler(MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start))
 
     app.add_error_handler(error_handler_func)
