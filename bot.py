@@ -370,21 +370,24 @@ async def prompt_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-    if not msg or (msg.text and msg.text == "🏠 ወደ ዋና ገጽ"):
-        return await start(update, context)
+    if not msg:
+        return ConversationHandler.END
+
+    # "ወደ ዋና ገጽ" ከተጫነ ቀጥታ ወደ start መመለስ
+    if msg.text == "🏠 ወደ ዋና ገጽ":
+        await start(update, context)
+        return ConversationHandler.END
 
     user = update.effective_user
-    user_loc = context.user_data.get("user_location")
+    user_loc = context.user_data.get('user_location')
     verified_pharmacies = get_verified_pharmacies_by_location(user_loc) if user_loc else []
     if not verified_pharmacies:
         verified_pharmacies = get_verified_pharmacies_by_location(None)
 
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{user.id}"),
-            InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{user.id}"),
-        ]
-    ]
+    keyboard = [[
+        InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{user.id}"),
+        InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{user.id}")
+    ]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     target_chats = verified_pharmacies if verified_pharmacies else [msg.chat_id]
 
@@ -395,7 +398,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
     if photo_file_id:
         await msg.reply_text(
             f"✅ የሐኪም ማዘዣ ፎቶዎ ተቀብለናል! ለ{len(target_chats)} ሕጋዊ ፋርማሲዎች ጥያቄው ተልኳል።{loc_tag}",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         for chat_id in target_chats:
             try:
@@ -405,24 +408,24 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
                 else:
                     await context.bot.send_photo(chat_id=chat_id, photo=photo_file_id, caption=caption, reply_markup=reply_markup)
             except Exception as e:
-                logging.error(f"ለፋርማሲ {chat_id} መላክ አልተቻለም፦ {e}")
-
+                logging.error(f"Pharmacy notify error: {e}")
     elif msg.text:
         med_name = msg.text
         await msg.reply_text(
             f"✅ የመድኃኒት ስም '{med_name}' ተቀብለናል! ለ{len(target_chats)} ሕጋዊ ፋርማሲዎች እየተላከ ነው...{loc_tag}",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         for chat_id in target_chats:
             try:
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ!**\nየተፈለገው መድኃኒት፡ **{med_name}**\n📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n\nመድኃኒቱ አለዎት?",
-                    reply_markup=reply_markup,
+                    reply_markup=reply_markup
                 )
             except Exception as e:
-                logging.error(f"ለፋርማሲ {chat_id} መላክ አልተቻለም፦ {e}")
+                logging.error(f"Pharmacy notify error: {e}")
 
+    # ወዲያውኑ ConversationHandler እንዲዘጋ ማድረግ
     return ConversationHandler.END
 
 async def handle_pharmacy_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
