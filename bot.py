@@ -261,11 +261,11 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
+        # SDK ማስተካከያ
         genai.configure(api_key=api_key)
         
-        # ለከፍተኛ ጥራት gemini-1.5-pro ወይም gemini-1.5-flash መጠቀም ትችላለህ
-        # Gemini 2.5 Pro ለማድረግ 'gemini-1.5-pro' የሚለውን 'gemini-2.5-pro' ማድረግ ትችላለህ
-        ai_model = genai.GenerativeModel('GEMINI 2.5 PRO')
+        # የሞዴሉ ስም 'gemini-1.5-flash' ወይም 'gemini-1.5-pro' ብቻ መሆን አለበት
+        ai_model = genai.GenerativeModel('gemini-1.5-flash')
 
         if msg.photo:
             photo_file = await msg.photo[-1].get_file()
