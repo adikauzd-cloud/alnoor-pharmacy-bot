@@ -265,7 +265,7 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         genai.configure(api_key=api_key)
         
         # የሞዴሉ ስም 'gemini-1.5-flash' ወይም 'gemini-1.5-pro' ብቻ መሆን አለበት
-        ai_model = genai.GenerativeModel('gemini-1.5-flash')
+        ai_model = genai.GenerativeModel('gemini-2.5-flash')
 
         if msg.photo:
             photo_file = await msg.photo[-1].get_file()
