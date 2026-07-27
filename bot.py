@@ -66,6 +66,12 @@ HOURS_KEYBOARD = [
     ["🏠 ወደ ዋና ገጽ"]
 ]
 
+MENU_BUTTON_LIST = [
+    "🔍 መድኃኒት ፈልግ", "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ",
+    "📍 አካባቢ ምረጥ", "📋 የፋርማሲዎች ዝርዝር",
+    "🏥 ፋርማሲ መዝግብ", "📞 እገዛ / ድጋፍ", "🏠 ወደ ዋና ገጽ"
+]
+
 MENU_BUTTONS_REGEX = "^(🔍 መድኃኒት ፈልግ|📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ|📍 አካባቢ ምረጥ|📋 የፋርማሲዎች ዝርዝር|🏥 ፋርማሲ መዝግብ|📞 እገዛ / ድጋፍ|🏠 ወደ ዋና ገጽ)$"
 
 # Database Helpers
@@ -258,10 +264,8 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
     if not msg:
         return ConversationHandler.END
 
-    # ተጠቃሚው ሌላ ሜኑ አዝራር ከነካ ውይይቱን ሰርዞ ወደ መጀመሪያው ይመልሳል
-    if msg.text and (msg.text == "🏠 ወደ ዋና ገጽ" or filters.Regex(MENU_BUTTONS_REGEX).check_update(update)):
-        if msg.text == "🔍 መድኃኒት ፈልግ":
-            return await prompt_search(update, context)
+    # የተላከው ጽሑፍ ከአዝራሮቹ አንዱ ከሆነ
+    if msg.text and msg.text in MENU_BUTTON_LIST:
         await start(update, context)
         return ConversationHandler.END
 
@@ -342,7 +346,7 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg:
         return WAITING_FOR_MED_INFO
 
-    if msg.text and (msg.text == "🏠 ወደ ዋና ገጽ" or filters.Regex(MENU_BUTTONS_REGEX).check_update(update)):
+    if msg.text and msg.text in MENU_BUTTON_LIST:
         await start(update, context)
         return ConversationHandler.END
 
@@ -448,7 +452,7 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
     if not msg:
         return ConversationHandler.END
         
-    if msg.text and (msg.text == "🏠 ወደ ዋና ገጽ" or filters.Regex(MENU_BUTTONS_REGEX).check_update(update)):
+    if msg.text and msg.text in MENU_BUTTON_LIST:
         await start(update, context)
         return ConversationHandler.END
 
