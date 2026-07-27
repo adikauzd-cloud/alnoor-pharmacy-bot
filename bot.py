@@ -364,10 +364,18 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
     if not msg:
         return ConversationHandler.END
 
-    # 🛡️ የሜኑ አዝራር ከሆነ በሌላ ቦታ ይታከላል
-    # (ነገር ግን እዚህ ላይ እንደ ጥበቃ እንቆይ)
-    if msg.text and msg.text in MENU_BUTTONS:
-        return await handle_menu_buttons(update, context)
+    if msg.text:
+        menu_items = [
+            "🔍 መድኃኒት ፈልግ", "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ",
+            "📍 አካባቢ ምረጥ", "📋 የፋርማሲዎች ዝርዝር",
+            "🏥 ፋርማሲ መዝግብ", "📞 እገዛ / ድጋፍ", "🏠 ወደ ዋና ገጽ"
+        ]
+        if msg.text in menu_items:
+            if msg.text == "🔍 መድኃኒት ፈልግ":
+                return await prompt_search(update, context)
+            else:
+                await start(update, context)
+                return ConversationHandler.END
 
     user = update.effective_user
     user_loc = context.user_data.get('user_location')
