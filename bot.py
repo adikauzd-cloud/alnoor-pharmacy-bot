@@ -2,7 +2,8 @@ import logging
 import os
 import threading
 import psycopg2
-import requests  # 🔄 httpx ን ወደ requests ቀይር
+import requests
+import json
 from flask import Flask
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -40,22 +41,14 @@ if not BOT_TOKEN:
 
 LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
 
-# Groq Configuration
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "mixtral-8x7b-32768")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-
-# ✅ የተስተካከለ - ይህን አስወግድ
-# else:
-#     ai_model = None
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
-# ==============================================================================
-# DATABASE FUNCTIONS (አልተለወጠም)
-# ==============================================================================
 def get_db_connection():
     if DATABASE_URL:
         db_url = DATABASE_URL.replace("postgres://", "postgresql://", 1) if DATABASE_URL.startswith("postgres://") else DATABASE_URL
@@ -244,11 +237,13 @@ async def analyze_with_groq(prompt, text=None, image_bytes=None):
         return "⚠️ የGroq AI አገልግሎት ቁልፍ አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
     
     try:
-        # ለፎቶ የተለየ አያያዝ
-        if image_bytes:
+        # ✅ የጥያቄ ይዘት ማዘጋጀት - ትክክለኛው መንገድ
+        if text:
+            user_content = f"{prompt}\n\nየመድኃኒቱ ስም፦ {text}"
+        elif image_bytes:
             user_content = f"{prompt}\n\n[ማሳሰቢያ: የፎቶ ምስል ተልኳል፣ ነገር ግን Groq ምስሎችን በቀጥታ ማየት አይችልም። እባክዎ የመድሃኒቱን ስም በጽሁፍ ይጻፉልን።]"
         else:
-            user_content = f"{prompt}\n\nየመድኃኒቱ ስም፦ {text}"
+            return "❌ ምንም መረጃ አልተላከም።"
         
         messages = [
             {"role": "system", "content": "አንተ የመድሃኒት ባለሙያ ነህ። መረጃህን በአማርኛ ስጥ።"},
@@ -267,24 +262,24 @@ async def analyze_with_groq(prompt, text=None, image_bytes=None):
             "max_tokens": 1024
         }
         
-        # 🔄 httpx ን ወደ requests ቀይር
         response = requests.post(GROQ_API_URL, json=payload, headers=headers, timeout=30)
-        response.raise_for_status()
+        
+        # ✅ የተሻሻለ የስህተት አያያዝ
+        if response.status_code != 200:
+            error_detail = response.text
+            logging.error(f"Groq API Error {response.status_code}: {error_detail}")
+            return f"❌ የGroq API ስህተት፦ {response.status_code}\n\n{error_detail[:200]}"
+        
         result = response.json()
         return result['choices'][0]['message']['content']
             
     except requests.exceptions.Timeout:
         return "⏱️ የጊዜ ገደብ አልፏል። እባክዎ እንደገና ይሞክሩ።"
     except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 401:
-            return "⚠️ የGroq API ቁልፍ ትክክል አይደለም። እባክዎ ያረጋግጡ።"
-        elif e.response.status_code == 429:
-            return "⏳ የጥያቄ ገደብ አልፏል። እባክዎ ትንሽ ቆይተው ይሞክሩ።"
-        else:
-            return f"❌ የGroq API ስህተት፦ {e.response.status_code}"
+        return f"❌ የGroq API ስህተት፦ {e.response.status_code}"
     except Exception as e:
         logging.error(f"Groq API error: {e}")
-        return f"❌ መረጃውን መተንተን አልተቻለም።"
+        return f"❌ መረጃውን መተንተን አልተቻለም። {str(e)[:100]}"
 
 # ----------------- AI የመድኃኒት መረጃ ማብራሪያ SECTION -----------------
 
@@ -332,13 +327,16 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if msg.photo:
             photo_file = await msg.photo[-1].get_file()
             image_bytes = await photo_file.download_as_bytearray()
+            # Groq ምስል አይደግፍም ስለዚህ መልእክት እንላካለን
             await msg.reply_text(
                 "📷 ማሳሰቢያ፦ Groq AI ምስሎችን በቀጥታ ማየት አይችልም። የመድኃኒቱን ስም በጽሁፍ ቢጽፉልን የተሻለ መረጃ ልንሰጥዎ እንችላለን።"
             )
+            # ✅ ትክክለኛው ጥሪ - text=None እና image_bytes በመጠቀም
             response_text = await analyze_with_groq(prompt, text=None, image_bytes=image_bytes)
             
         elif msg.text:
             text = msg.text
+            # ✅ ትክክለኛው ጥሪ - text እና image_bytes=None በመጠቀም
             response_text = await analyze_with_groq(prompt, text=text, image_bytes=None)
         else:
             await msg.reply_text(
@@ -356,7 +354,8 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(f"Groq error: {e}")
         await msg.reply_text(
-            "❌ መረጃውን መተንተን አልተቻለም። እባክዎ የምስሉ ጥራት ጥሩ መሆኑን ያረጋግጡ ወይም የመድኃኒቱን ስም በጽሑፍ ይጻፉልን።",
+            f"❌ መረጃውን መተንተን አልተቻለም።\n\n`{str(e)[:200]}`",
+            parse_mode="Markdown",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
 
