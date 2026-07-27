@@ -175,6 +175,70 @@ REG_LOCATION = 11
 REG_PHONE = 12
 REG_HOURS = 14
 REG_LICENSE = 13
+MENU_BUTTONS = [
+    "🔍 መድኃኒት ፈልግ", "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ",
+    "📍 አካባቢ ምረጥ", "📋 የፋርማሲዎች ዝርዝር",
+    "🏥 ፋርማሲ መዝግብ", "📞 እገዛ / ድጋፍ", "🏠 ወደ ዋና ገጽ"
+]
+
+async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg:
+        return ConversationHandler.END
+
+    # የተላከው ጽሑፍ ከሜኑ አዝራሮች አንዱ ከሆነ ወይም "ወደ ዋና ገጽ" ከሆነ ውይይቱን ዝጋው
+    if msg.text in MENU_BUTTONS:
+        await start(update, context)
+        return ConversationHandler.END
+
+    user = update.effective_user
+    user_loc = context.user_data.get('user_location')
+    verified_pharmacies = get_verified_pharmacies_by_location(user_loc) if user_loc else []
+    if not verified_pharmacies:
+        verified_pharmacies = get_verified_pharmacies_by_location(None)
+
+    keyboard = [[
+        InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{user.id}"),
+        InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{user.id}")
+    ]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    target_chats = verified_pharmacies if verified_pharmacies else [msg.chat_id]
+
+    photo_file_id = msg.photo[-1].file_id if msg.photo else (msg.document.file_id if msg.document else None)
+    is_doc = True if msg.document else False
+    loc_tag = f" (አካባቢ፦ {user_loc})" if user_loc else ""
+
+    if photo_file_id:
+        await msg.reply_text(
+            f"✅ የሐኪም ማዘዣ ፎቶዎ ተቀብለናል! ለ{len(target_chats)} ሕጋዊ ፋርማሲዎች ጥያቄው ተልኳል።{loc_tag}",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        for chat_id in target_chats:
+            try:
+                caption = f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ (በፎቶ)!**\nከደንበኛ፡ {user.first_name}\n📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n\nመድኃኒቱ አለዎት?"
+                if is_doc:
+                    await context.bot.send_document(chat_id=chat_id, document=photo_file_id, caption=caption, reply_markup=reply_markup)
+                else:
+                    await context.bot.send_photo(chat_id=chat_id, photo=photo_file_id, caption=caption, reply_markup=reply_markup)
+            except Exception as e:
+                logging.error(f"Pharmacy notify error: {e}")
+    elif msg.text:
+        med_name = msg.text
+        await msg.reply_text(
+            f"✅ የመድኃኒት ስም '{med_name}' ተቀብለናል! ለ{len(target_chats)} ሕጋዊ ፋርማሲዎች እየተላከ ነው...{loc_tag}",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        for chat_id in target_chats:
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ!**\nየተፈለገው መድኃኒት፡ **{med_name}**\n📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n\nመድኃኒቱ አለዎት?",
+                    reply_markup=reply_markup
+                )
+            except Exception as e:
+                logging.error(f"Pharmacy notify error: {e}")
+
+    return ConversationHandler.END
 
 MAIN_KEYBOARD = [
     ["🔍 መድኃኒት ፈልግ", "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ"],
