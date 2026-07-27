@@ -34,47 +34,21 @@ def run_flask():
 # ==============================================================================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8697195057:AAEWFLHH8EvXNNc4kCyQMke62CvDz-oYgNc")
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "7030641737"))
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://alnoor-pharmacy-bot-3.onrender.com")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
-# 2. telegram_app እዚሁ ላይ ይፈጠራል! (ከ Handlers በፊት)
-telegram_app = Application.builder().token(BOT_TOKEN).build()
+LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
 
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    ai_model = None
 
-# 3. በመቀጠል ሁሉም async def functions ይጻፋሉ (start, prompt_search, admin_stats, ወዘተ...)
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ...
-    pass
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ...
-    pass
-
-# ... (ሌሎች functions) ...
-
-
-# 4. ከ Functions በኋላ Handlers ለ telegram_app ይመዘገባሉ
-telegram_app.add_handler(CommandHandler("start", start))
-telegram_app.add_handler(CommandHandler("stats", admin_stats))
-# ... (ሌሎች handlers) ...
-
-
-# 5. በመጨረሻ FastAPI እና Webhook ክፍል ይጻፋል
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    init_db()
-    await telegram_app.initialize()
-    await telegram_app.start()
-    
-    webhook_target = f"{WEBHOOK_URL.rstrip('/')}/webhook"
-    await telegram_app.bot.set_webhook(url=webhook_target)
-    logging.info(f"✅ Webhook set to: {webhook_target}")
-    
-    yield
-    
-    await telegram_app.stop()
-    await telegram_app.shutdown()
-
-app = FastAPI(lifespan=lifespan)
 def get_db_connection():
     if DATABASE_URL:
         # postgres:// ከሆነ ወደ postgresql:// መቀየር (ለ psycopg2)
@@ -271,10 +245,18 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg:
         return WAITING_FOR_MED_INFO
+
     if msg.text == "🏠 ወደ ዋና ገጽ":
         return await start(update, context)
 
-    status_msg = await msg.reply_text("⏳ **መረጃው በ AI በመተንተን ላይ ነው... እባክዎ ትንሽ ይጠብቁ...**", parse_mode="Markdown")
+    if not ai_model:
+        await msg.reply_text(
+            "⚠️ የ AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        return ConversationHandler.END
+
+    await msg.reply_text("⏳ **መረጃው በ AI በመተንተን ላይ ነው... እባክዎ ትንሽ ይጠብቁ...**")
 
     prompt = (
         "እባክህ የዚህን መድኃኒት ወይም የሐኪም ማዘዣ ፎቶ መዝገብ ተንትነህ በሚከተለው መልኩ በአማርኛ አብራራ፦\n"
@@ -285,53 +267,92 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "ማስታወሻ፦ መረጃው ለግንዛቤ ብቻ እንደሆነ እና የሐኪም ምክርን እንደማይተካ በጥሩ ስነ-ምግባር ግለጽ።"
     )
 
-    api_key = os.environ.get("GEMINI_API_KEY", MY_GEMINI_KEY)
-
-    if not api_key:
-        await status_msg.edit_text("❌ **የ Gemini API Key አልተገኘም!**\nእባክዎ Render ዳሽቦርድ ላይ `GEMINI_API_KEY` ማስገባትዎን ያረጋግጡ።")
-        return ConversationHandler.END
-
-    # ትክክለኛው የ Google API Model Name
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-
     try:
-        contents_parts = []
         if msg.photo:
             photo_file = await msg.photo[-1].get_file()
             photo_bytes = await photo_file.download_as_bytearray()
-            base64_image = base64.b64encode(photo_bytes).decode('utf-8')
-            contents_parts = [
-                {"text": prompt},
-                {"inline_data": {"mime_type": "image/jpeg", "data": base64_image}}
-            ]
-        elif msg.text:
-            contents_parts = [{"text": f"{prompt}\n\nየመድኃኒቱ ስም፦ {msg.text}"}]
-
-        payload = {"contents": [{"parts": contents_parts}]}
-        headers = {'Content-Type': 'application/json'}
-        req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method='POST')
-
-        with urllib.request.urlopen(req, timeout=30) as response:
-            res_body = json.loads(response.read().decode('utf-8'))
+            image_part = {"mime_type": "image/jpeg", "data": bytes(photo_bytes)}
+            response = ai_model.generate_content([prompt, image_part])
             
-            if 'candidates' in res_body and len(res_body['candidates']) > 0:
-                ai_text = res_body['candidates'][0]['content']['parts'][0]['text']
-                await status_msg.edit_text(
-                    f"💡 **የመድኃኒት መረጃ ማብራሪያ፦**\n\n{ai_text}\n\n"
-                    f"⚠️ *ማስታወሻ፦ ይህ መረጃ በ AI የተዘጋጀ ለግንዛቤ ብቻ የሚያገለግል ነው። ሁልጊዜ የሐኪምዎን ወይም የፋርማሲስቱን መመሪያ ይከተሉ።*",
-                    parse_mode="Markdown"
-                )
-            else:
-                await status_msg.edit_text("❌ AI መረጃውን መተንተን አልቻለም። እባክዎ እንደገና ይሞክሩ።")
+        elif msg.text:
+            response = ai_model.generate_content(f"{prompt}\n\nየመድኃኒቱ ስም፦ {msg.text}")
 
-    except urllib.error.HTTPError as e:
-        error_details = e.read().decode('utf-8')
-        logging.error(f"Gemini API Error: {error_details}")
-        await status_msg.edit_text(f"❌ **የ AI API ስህተት ተፈጽሟል (HTTP {e.code})**\n`{error_details[:100]}`")
+        await msg.reply_text(
+            f"💡 **የመድኃኒት መረጃ ማብራሪያ፦**\n\n{response.text}\n\n"
+            f"⚠️ *ማስታወሻ፦ ይህ መረጃ በ AI የተዘጋጀ ለግንዛቤ ብቻ የሚያገለግል ነው። ሁልጊዜ የሐኪምዎን ወይም የፋርማሲስቱን መመሪያ ይከተሉ።*",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
     except Exception as e:
-        logging.error(f"AI Processing Error: {e}")
-        await status_msg.edit_text(f"❌ **መረጃውን መተንተን አልተቻለም!**\n\n`{str(e)[:150]}`", parse_mode="Markdown")
+        logging.error(f"AI error: {e}")
+        await msg.reply_text(
+            "❌ መረጃውን መተንተን አልተቻለም። እባክዎ የምስሉ ጥራት ጥሩ መሆኑን ያረጋግጡ ወይም የመድኃኒቱን ስም በጽሑፍ ይጻፉልን።",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
 
+    return ConversationHandler.END
+
+# ----------------- ADMIN & OTHERS -----------------
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ ይቅርታ! ይህንን ትዕዛዝ መጠቀም የሚችለው አድሚኑ ብቻ ነው።")
+        return
+
+    total, verified, pending = get_bot_statistics()
+    stats_text = (
+        f"📊 **የቦቱ ስታቲስቲክስ እና መረጃ (PostgreSQL)**\n\n"
+        f"🏥 **ጠቅላላ የተመዘገቡ ፋርማሲዎች፦** {total}\n"
+        f"✅ **የተረጋገጡ (ሕጋዊ) ፋርማሲዎች፦** {verified}\n"
+        f"⏳ **ማረጋገጫ የሚጠብቁ (Pending)፦** {pending}\n\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"🤖 *አል-ኑር መድኃኒት አፋላጊ ሲስተም*"
+    )
+    await update.message.reply_text(stats_text, parse_mode="Markdown")
+
+async def list_pharmacies(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pharmacies = get_all_verified_pharmacies()
+    if not pharmacies:
+        await update.message.reply_text(
+            "ℹ️ በአሁኑ ሰዓት የተረጋገጡ ሕጋዊ ፋርማሲዎች አልተገኙም።\n(አዲስ ከተመዘገቡ በአድሚን 'Approve' መደረጋቸውን ያረጋግጡ)",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        return
+
+    text = "🏥 **የተመዘገቡ ሕጋዊ ፋርማሲዎች ዝርዝር፦**\n\n"
+    for idx, (name, loc, phone, hours) in enumerate(pharmacies, 1):
+        text += f"{idx}. **{name}**\n"
+        text += f"   📍 አካባቢ፦ {loc}\n"
+        text += f"   📞 ስልክ፦ {phone}\n"
+        text += f"   🕒 የስራ ሰዓት፦ {hours}\n"
+        text += "────────────────────\n"
+
+    await update.message.reply_text(
+        text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+    )
+
+async def select_location_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    current_loc = context.user_data.get("user_location", "አልተመረጠም")
+    await update.message.reply_text(
+        f"📍 **የአካባቢ መምረጫ**\n\n"
+        f"አሁን የተመረጠው አካባቢ፦ **{current_loc}**\n\n"
+        f"እባክዎ የሚገኙበትን ወይም የሚቀርብዎትን ክፍለ ከተማ ከታች ካሉት አዝራሮች ይምረጡ ወይም ይጻፉልን፦",
+        reply_markup=ReplyKeyboardMarkup(LOCATION_KEYBOARD, resize_keyboard=True),
+    )
+    return WAITING_FOR_LOCATION_SET
+
+async def save_user_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if msg.text == "🏠 ወደ ዋና ገጽ":
+        return await start(update, context)
+
+    selected_loc = msg.text
+    context.user_data["user_location"] = selected_loc
+    await msg.reply_text(
+        f"✅ አካባቢዎ በስኬት ወደ **'{selected_loc}'** ተቀይሯል!\n\n"
+        f"አሁን መድኃኒት ሲፈልጉ ጥያቄዎ በቅድሚያ ለ**{selected_loc}** አካባቢ ፋርማሲዎች ይላካል።",
+        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
+    )
     return ConversationHandler.END
 
 async def prompt_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -469,66 +490,7 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
             logging.error(f"ለደንበኛው {customer_id} መላክ አልተቻለም፦ {e}")
 
     return ConversationHandler.END
-    
-async def select_location_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    current_loc = context.user_data.get('user_location', 'አልተመረጠም')
-    await update.message.reply_text(
-        f"📍 **የአካባቢ መምረጫ**\n\nአሁን የተመረጠው አካባቢ፦ **{current_loc}**\n\n"
-        f"እባክዎ የሚገኙበትን ወይም የሚቀርብዎትን ክፍለ ከተማ ከታች ካሉት አዝራሮች ይምረጡ ወይም ይጻፉልን፦",
-        reply_markup=ReplyKeyboardMarkup(LOCATION_KEYBOARD, resize_keyboard=True)
-    )
-    return WAITING_FOR_LOCATION_SET
 
-async def save_user_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    if msg.text == "🏠 ወደ ዋና ገጽ":
-        return await start(update, context)
-    selected_loc = msg.text
-    context.user_data['user_location'] = selected_loc
-    await msg.reply_text(
-        f"✅ አካባቢዎ በስኬት ወደ **'{selected_loc}'** ተቀይሯል!\n\n"
-        f"አሁን መድኃኒት ሲፈልጉ ጥያቄዎ በቅድሚያ ለ**{selected_loc}** አካባቢ ፋርማሲዎች ይላካል።",
-        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-    )
-    return ConversationHandler.END
-
-
-# 2. ከዛ በኋላ ConversationHandler ይመዘገባል (ከላይ ያሉት Functions ከተጻፉ በኋላ!)
-loc_conv = ConversationHandler(
-    entry_points=[MessageHandler(filters.Regex("^📍 አካባቢ ምረጥ$"), select_location_prompt)],
-    states={
-        WAITING_FOR_LOCATION_SET: [
-            MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, save_user_location)
-        ]
-    },
-    fallbacks=[
-        CommandHandler("start", start),
-        MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)
-    ]
-)
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_CHAT_ID:
-        await update.message.reply_text("⛔ ይቅርታ! ይህንን ትዕዛዝ መጠቀም የሚችለው አድሚኑ ብቻ ነው።")
-        return
-    total, verified, pending = get_bot_statistics()
-    stats_text = (
-        f"📊 **የቦቱ ስታቲስቲክስ እና መረጃ**\n\n"
-        f"🏥 **ጠቅላላ የተመዘገቡ ፋርማሲዎች፦** {total}\n"
-        f"✅ **የተረጋገጡ (ሕጋዊ) ፋርማሲዎች፦** {verified}\n"
-        f"⏳ **ማረጋገጫ የሚጠብቁ (Pending)፦** {pending}\n\n"
-        f"━━━━━━━━━━━━━━━\n🤖 *አል-ኑር መድኃኒት አፋላጊ ሲስተም*"
-    )
-    await update.message.reply_text(stats_text, parse_mode="Markdown")
-
-
-# 2. ሁለተኛው ደረጃ፡ Function ከተጻፈ በኋላ Handler ይመዘገባል
-telegram_app.add_handler(CommandHandler("start", start))
-telegram_app.add_handler(CommandHandler("stats", admin_stats))  # <--- admin_stats ከላይ ስላለ አሁን ስህተት አይፈጥርም!
-telegram_app.add_handler(MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start))
-telegram_app.add_handler(MessageHandler(filters.Regex("^📞 እገዛ / ድጋፍ$"), show_help))
-telegram_app.add_handler(MessageHandler(filters.Regex("^📋 የፋርማሲዎች ዝርዝር$"), list_pharmacies))
-telegram_app.add_handler(CallbackQueryHandler(handle_admin_approval, pattern="^verify_"))
 async def handle_admin_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
