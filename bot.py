@@ -443,7 +443,44 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
             logging.error(f"ለደንበኛው {customer_id} መላክ አልተቻለም፦ {e}")
 
     return ConversationHandler.END
+    
+async def select_location_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    current_loc = context.user_data.get('user_location', 'አልተመረጠም')
+    await update.message.reply_text(
+        f"📍 **የአካባቢ መምረጫ**\n\nአሁን የተመረጠው አካባቢ፦ **{current_loc}**\n\n"
+        f"እባክዎ የሚገኙበትን ወይም የሚቀርብዎትን ክፍለ ከተማ ከታች ካሉት አዝራሮች ይምረጡ ወይም ይጻፉልን፦",
+        reply_markup=ReplyKeyboardMarkup(LOCATION_KEYBOARD, resize_keyboard=True)
+    )
+    return WAITING_FOR_LOCATION_SET
 
+async def save_user_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if msg.text == "🏠 ወደ ዋና ገጽ":
+        return await start(update, context)
+    selected_loc = msg.text
+    context.user_data['user_location'] = selected_loc
+    await msg.reply_text(
+        f"✅ አካባቢዎ በስኬት ወደ **'{selected_loc}'** ተቀይሯል!\n\n"
+        f"አሁን መድኃኒት ሲፈልጉ ጥያቄዎ በቅድሚያ ለ**{selected_loc}** አካባቢ ፋርማሲዎች ይላካል።",
+        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+    )
+    return ConversationHandler.END
+
+
+# 2. ከዛ በኋላ ConversationHandler ይመዘገባል (ከላይ ያሉት Functions ከተጻፉ በኋላ!)
+loc_conv = ConversationHandler(
+    entry_points=[MessageHandler(filters.Regex("^📍 አካባቢ ምረጥ$"), select_location_prompt)],
+    states={
+        WAITING_FOR_LOCATION_SET: [
+            MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, save_user_location)
+        ]
+    },
+    fallbacks=[
+        CommandHandler("start", start),
+        MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)
+    ]
+)
 async def handle_admin_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
