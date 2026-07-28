@@ -43,7 +43,7 @@ if not BOT_TOKEN:
 LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
 
 # ==============================================================================
-# 🤖 Zhipu AI (GLM) Configuration
+# 🤖 Zhipu AI (GLM) Configuration - የተስተካከለ
 # ==============================================================================
 ZHIPU_API_KEY = os.environ.get("ZHIPU_API_KEY", "")
 ZHIPU_MODEL = os.environ.get("ZHIPU_MODEL", "glm-4-flash")
@@ -231,7 +231,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==============================================================================
-# 🤖 AI Handler (Zhipu AI / GLM)
+# 🤖 AI Handler (Zhipu AI / GLM - የተስተካከለ)
 # ==============================================================================
 
 async def analyze_with_zhipu(prompt, text=None, image_bytes=None):
@@ -279,6 +279,8 @@ async def analyze_with_zhipu(prompt, text=None, image_bytes=None):
                 return "⚠️ የZhipu API ቁልፍ ትክክል አይደለም። እባክዎ ያረጋግጡ።"
             elif "quota" in error_detail.lower():
                 return "⚠️ የነጻ ጥቅም ገደብ አልፏል። እባክዎ በኋላ ይሞክሩ።"
+            elif "model" in error_detail.lower():
+                return f"⚠️ ሞዴሉ '{ZHIPU_MODEL}' አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
             else:
                 return f"❌ የZhipu API ስህተት፦ {response.status_code}"
         
