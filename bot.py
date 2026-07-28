@@ -43,11 +43,18 @@ if not BOT_TOKEN:
 LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
 
 # ==============================================================================
-# 🤖 OpenRouter AI Configuration
+# 🤖 OpenRouter AI Configuration (ለመድሃኒት መረጃ)
 # ==============================================================================
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.0-flash-001")
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# ==============================================================================
+# 🤖 Translation AI Configuration (ለትርጉም)
+# ==============================================================================
+TRANSLATE_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")  # ተመሳሳይ ቁልፍ መጠቀም እንችላለን
+TRANSLATE_MODEL = os.environ.get("TRANSLATE_MODEL", "openai/gpt-4o-mini")  # ርካሽ ሞዴል
+TRANSLATE_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -231,11 +238,62 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==============================================================================
-# 🤖 AI Handler (OpenRouter)
+# 🤖 Translation AI Handler
 # ==============================================================================
 
-async def analyze_with_openrouter_english(prompt, text=None, image_bytes=None):
-    """OpenRouter API በመጠቀም መድሃኒት ተንትን - English Response"""
+async def translate_to_amharic(english_text):
+    """Translate English text to Amharic using dedicated translation model"""
+    
+    if not TRANSLATE_API_KEY:
+        return None
+    
+    try:
+        translation_prompt = f"""Translate the following medical information to Amharic (Ethiopian language).
+Use natural, conversational Amharic.
+Keep medical terms accurate.
+Make it easy for patients to understand.
+
+Medical Information:
+{english_text}
+
+Amharic Translation:"""
+
+        response = requests.post(
+            url=TRANSLATE_API_URL,
+            headers={
+                "Authorization": f"Bearer {TRANSLATE_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://alnoor-pharmacy-bot.onrender.com",
+                "X-Title": "Al-Noor Pharmacy Bot"
+            },
+            json={
+                "model": TRANSLATE_MODEL,
+                "messages": [
+                    {"role": "system", "content": "You are a professional medical translator. Translate accurately and naturally to Amharic."},
+                    {"role": "user", "content": translation_prompt}
+                ],
+                "temperature": 0.3,
+                "max_tokens": 1024
+            },
+            timeout=60
+        )
+        
+        if response.status_code == 200:
+            return response.json()['choices'][0]['message']['content']
+        else:
+            logging.error(f"Translation API Error: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        logging.error(f"Translation error: {e}")
+        return None
+
+# ==============================================================================
+# 🤖 Medicine Info AI Handler
+# ==============================================================================
+
+async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
+    """OpenRouter API በመጠቀም መድሃኒት ተንትን"""
     
     if not OPENROUTER_API_KEY:
         return "⚠️ OpenRouter API key is missing."
@@ -250,7 +308,7 @@ async def analyze_with_openrouter_english(prompt, text=None, image_bytes=None):
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
             ]
         else:
-            return "❌ No data received."
+            return "❌ No data received. Please send a medicine name or photo."
         
         # ✅ System message in English
         system_content = """You are a medical professional and pharmacist. 
@@ -320,7 +378,6 @@ async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
     
-    # ✅ Check if it's the home button
     if query.data == "go_home":
         await query.message.delete()
         await start(update, context)
@@ -336,38 +393,10 @@ async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text("⏳ Translating to Amharic... Please wait...")
 
     try:
-        translation_prompt = f"""Translate the following medical information to Amharic (Ethiopian language).
-Keep medical terms accurate.
-Use simple, clear Amharic.
-
-Original:
-{english_text}
-
-Amharic translation:"""
-
-        response = requests.post(
-            url=OPENROUTER_API_URL,
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://alnoor-pharmacy-bot.onrender.com",
-                "X-Title": "Al-Noor Pharmacy Bot"
-            },
-            json={
-                "model": OPENROUTER_MODEL,
-                "messages": [
-                    {"role": "system", "content": "You are a medical translator. Translate accurately."},
-                    {"role": "user", "content": translation_prompt}
-                ],
-                "temperature": 0.3,
-                "max_tokens": 1024
-            },
-            timeout=60
-        )
+        # ✅ Use dedicated translation model
+        amharic_text = await translate_to_amharic(english_text)
         
-        if response.status_code == 200:
-            amharic_text = response.json()['choices'][0]['message']['content']
-            
+        if amharic_text:
             # ✅ Show Amharic translation with option to see English again
             inline_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📝 Show English", callback_data="show_english")],
@@ -382,11 +411,9 @@ Amharic translation:"""
                 reply_markup=inline_keyboard
             )
             
-            # Store Amharic for showing English again
             context.user_data["last_amharic_response"] = amharic_text
-            
         else:
-            await query.edit_message_text("❌ Translation failed. Please try again.")
+            await query.edit_message_text("❌ Translation failed. Please try again later.")
             
     except Exception as e:
         await query.edit_message_text(f"❌ Translation error: {str(e)[:200]}")
@@ -441,11 +468,11 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 4. Common side effects
 5. Precautions and contraindications
 
-Medication: {msg.text}"""
+Medication: {msg.text if msg.text else 'Unknown'}"""
 
     try:
         # ✅ Get English response from AI
-        english_response = await analyze_with_openrouter_english(prompt, text=msg.text)
+        english_response = await analyze_with_openrouter(prompt, text=msg.text if msg.text else None)
         
         if english_response.startswith("❌") or english_response.startswith("⚠️"):
             await wait_msg.edit_text(english_response)
@@ -477,46 +504,6 @@ Medication: {msg.text}"""
             parse_mode="Markdown",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
-async def translate_to_amharic(english_text):
-    """ወደ አማርኛ ለመተርጎም የተሻሻለ ፕሮምፕት"""
-    
-    translation_prompt = f"""You are a medical translator with expertise in Amharic.
-Translate the following medical information from English to Amharic.
-
-IMPORTANT RULES:
-1. Use natural, conversational Amharic
-2. Keep medical terms in English with Amharic explanation
-3. Use simple words that patients can understand
-4. Maintain the structure (bullet points, numbers)
-
-Original Medical Information:
-{english_text}
-
-Amharic Translation:"""
-
-    response = requests.post(
-        url=OPENROUTER_API_URL,
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://alnoor-pharmacy-bot.onrender.com",
-            "X-Title": "Al-Noor Pharmacy Bot"
-        },
-        json={
-            "model": OPENROUTER_MODEL,
-            "messages": [
-                {"role": "system", "content": "You are a professional medical translator. Translate accurately and naturally."},
-                {"role": "user", "content": translation_prompt}
-            ],
-            "temperature": 0.3,
-            "max_tokens": 1024
-        },
-        timeout=60
-    )
-    
-    if response.status_code == 200:
-        return response.json()['choices'][0]['message']['content']
-    return None
 
     return ConversationHandler.END
 
