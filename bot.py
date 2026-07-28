@@ -46,7 +46,7 @@ LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4Fmr
 # 🤖 Zhipu AI (GLM) Configuration - የተስተካከለ
 # ==============================================================================
 ZHIPU_API_KEY = os.environ.get("ZHIPU_API_KEY", "")
-ZHIPU_MODEL = os.environ.get("ZHIPU_MODEL", "glm-4-flash")
+ZHIPU_MODEL = os.environ.get("ZHIPU_MODEL", "glm-4-air")
 ZHIPU_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 
 logging.basicConfig(
