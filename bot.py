@@ -43,14 +43,15 @@ if not BOT_TOKEN:
 LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
 
 # ==============================================================================
-# 🤖 Gemini AI Configuration
+# 🤖 Gemini AI Configuration - የተሻሻለ
 # ==============================================================================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-# ==============================================================================
-# 🤖 Gemini AI Configuration - ነጻ ሞዴል
-# ==============================================================================
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-exp")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")  # የተመከረ ነጻ ሞዴል
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+
+# ለማረጋገጫ
+if GEMINI_API_KEY and not GEMINI_API_KEY.startswith("AIza"):
+    logging.warning("⚠️ የGemini API ቁልፍ በ'AIza' መጀመር አለበት። እባክዎ ያረጋግጡ።")
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -234,7 +235,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==============================================================================
-# 🤖 AI Handler (Gemini)
+# 🤖 AI Handler (Gemini - የተሻሻለ)
 # ==============================================================================
 
 async def analyze_with_gemini(prompt, text=None, image_bytes=None):
@@ -279,7 +280,9 @@ async def analyze_with_gemini(prompt, text=None, image_bytes=None):
             if "API key" in error_detail:
                 return "⚠️ የGemini API ቁልፍ ትክክል አይደለም። እባክዎ ያረጋግጡ።"
             elif "quota" in error_detail.lower():
-                return "⚠️ የነጻ ጥቅም ገደብ አልፏል። እባክዎ በኋላ ይሞክሩ።"
+                return "⚠️ የዕለት ነጻ ጥቅል ገደብ አልፏል። እባክዎ ነገ ከጠዋቱ 3:00 ጀምሮ እንደገና ይሞክሩ።"
+            elif "model" in error_detail.lower() and "not found" in error_detail.lower():
+                return f"⚠️ ሞዴሉ '{GEMINI_MODEL}' አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
             else:
                 return f"❌ የGemini API ስህተት፦ {response.status_code}"
         
@@ -320,7 +323,7 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not GEMINI_API_KEY:
         await msg.reply_text(
-            "⚠️ የ Gemini AI አገልግሎቱ ለጊዜው አልተዋቀረም።",
+            "⚠️ የ Gemini AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         return ConversationHandler.END
@@ -345,64 +348,6 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
         return ConversationHandler.END
-
-    await msg.reply_text("⏳ መረጃው በ AI በመተንተን ላይ ነው... እባክዎ ትንሽ ይጠብቁ...")
-
-    prompt = (
-        "እባክህ የዚህን መድኃኒት ወይም የሐኪም ማዘዣ ፎቶ መዝገብ ተንትነህ በሚከተለው መልኩ በአማርኛ አብራራ፦\n"
-        "1. የመድኃኒቱ ስም (Medication Name)\n"
-        "2. ዋነኛ ጥቅም (Primary Usage)\n"
-        "3. አወሳሰድ እና ጥንቃቄዎች (Dosage & Precautions)\n"
-        "4. ሊከሰቱ የሚችሉ የጎንዮሽ ጉዳቶች (Side Effects)\n\n"
-        "ማስታወሻ፦ መረጃው ለግንዛቤ ብቻ እንደሆነ እና የሐኪም ምክርን እንደማይተካ በጥሩ ስነ-ምግባር ግለጽ።"
-    )
-
-    try:
-        image_bytes = None
-        text = None
-        
-        if msg.photo:
-            photo_file = await msg.photo[-1].get_file()
-            image_bytes = await photo_file.download_as_bytearray()
-            response_text = await analyze_with_gemini(prompt, text=None, image_bytes=image_bytes)
-            
-        elif msg.text:
-            text = msg.text
-            response_text = await analyze_with_gemini(prompt, text=text, image_bytes=None)
-        else:
-            await msg.reply_text(
-                "❌ የላኩት ግብዓት ስላልገባኝ ድጋሚ ይሞክሩ።",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-            return ConversationHandler.END
-
-        await msg.reply_text(
-            f"💡 የመድኃኒት መረጃ ማብራሪያ፦\n\n{response_text}\n\n"
-            f"⚠️ *ማስታወሻ፦ ይህ መረጃ በ AI የተዘጋጀ ለግንዛቤ ብቻ የሚያገለግል ነው። ሁልጊዜ የሐኪምዎን ወይም የፋርማሲስቱን መመሪያ ይከተሉ።*",
-            parse_mode="Markdown",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
-    except Exception as e:
-        error_msg = str(e)
-        logging.error(f"Gemini error: {error_msg}")
-        
-        # ✅ የተሻሻለ የስህተት መልእክት
-        if "quota" in error_msg.lower():
-            await msg.reply_text(
-                "⚠️ የዕለት ነጻ ጥቅል ገደብ አልፏል።\n\n"
-                "📅 እባክዎ ነገ ከጠዋቱ 3:00 ጀምሮ እንደገና ይሞክሩት!\n\n"
-                "🤖 AI መረጃውን በፍጥነት ይመልሳል።\n\n"
-                "💡 ወይም ትንሽ ቆይተው እንደገና ይሞክሩ።",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-        else:
-            await msg.reply_text(
-                f"❌ መረጃውን መተንተን አልተቻለም።\n\n`{str(e)[:200]}`",
-                parse_mode="Markdown",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-
-    return ConversationHandler.END
 
     await msg.reply_text("⏳ መረጃው በ AI በመተንተን ላይ ነው... እባክዎ ትንሽ ይጠብቁ...")
 
