@@ -46,7 +46,7 @@ LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4Fmr
 # 🤖 Gemini AI Configuration (የተስተካከለ)
 # ==============================================================================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
 logging.basicConfig(
@@ -262,7 +262,9 @@ async def analyze_with_gemini(prompt, text=None, image_bytes=None):
             return "❌ ምንም መረጃ አልተላከም።"
         
         headers = {"Content-Type": "application/json"}
-        response = requests.post(GEMINI_API_URL, json=payload, headers=headers, timeout=60)
+        
+        # ✅ የጊዜ ገደብ ጨምር (60 → 120 ሰከንድ)
+        response = requests.post(GEMINI_API_URL, json=payload, headers=headers, timeout=120)
         
         if response.status_code != 200:
             error_detail = response.text
@@ -271,7 +273,7 @@ async def analyze_with_gemini(prompt, text=None, image_bytes=None):
             if "API key" in error_detail:
                 return "⚠️ የGemini API ቁልፍ ትክክል አይደለም።"
             elif "quota" in error_detail.lower():
-                return "⚠️ የነጻ ጥቅም ገደብ አልፏል። እባክዎ በኋላ ይሞክሩ።"
+                return "⚠️ የነጻ ጥቅም ገደብ አልፏል። እባክዎ ነገ ከጠዋቱ 3:00 ጀምሮ ይሞክሩ።"
             elif "model" in error_detail.lower() or "not found" in error_detail.lower():
                 return f"⚠️ ሞዴሉ '{GEMINI_MODEL}' አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
             else:
@@ -284,7 +286,7 @@ async def analyze_with_gemini(prompt, text=None, image_bytes=None):
             return "❌ ምንም መልስ አልተገኘም።"
             
     except requests.exceptions.Timeout:
-        return "⏱️ የጊዜ ገደብ አልፏል። እባክዎ እንደገና ይሞክሩ።"
+        return "⏱️ የጊዜ ገደብ አልፏል። እባክዎ የመድኃኒቱን ስም በጽሑፍ ይላኩልን።"
     except Exception as e:
         logging.error(f"Gemini API error: {e}")
         return f"❌ መረጃውን መተንተን አልተቻለም። {str(e)[:100]}"
@@ -375,7 +377,15 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         error_msg = str(e)
         logging.error(f"Gemini error: {error_msg}")
         
-        if "quota" in error_msg.lower():
+        if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+            await msg.reply_text(
+                "⏱️ የጊዜ ገደብ አልፏል።\n\n"
+                "📝 እባክዎ የመድኃኒቱን ስም በጽሑፍ ይላኩልን።\n"
+                "🤖 AI መረጃውን በፍጥነት ይመልሳል።\n\n"
+                "💡 ወይም ትንሽ ቆይተው እንደገና ይሞክሩ።",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+        elif "quota" in error_msg.lower():
             await msg.reply_text(
                 "⚠️ የዕለት ነጻ ጥቅል ገደብ አልፏል።\n\n"
                 "📅 እባክዎ ነገ ከጠዋቱ 3:00 ጀምሮ እንደገና ይሞክሩት!\n\n"
