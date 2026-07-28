@@ -43,11 +43,11 @@ if not BOT_TOKEN:
 LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
 
 # ==============================================================================
-# 🤖 OpenRouter AI Configuration
+# 🤖 Gemini AI Configuration (የተስተካከለ)
 # ==============================================================================
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-3.2-3b-instruct")
-OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -231,70 +231,65 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==============================================================================
-# 🤖 AI Handler (OpenRouter)
+# 🤖 AI Handler (Gemini 1.5 Flash - የተስተካከለ)
 # ==============================================================================
 
-async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
-    """OpenRouter API በመጠቀም መድሃኒት ተንትን"""
+async def analyze_with_gemini(prompt, text=None, image_bytes=None):
+    """Gemini API በመጠቀም መድሃኒት ተንትን"""
     
-    if not OPENROUTER_API_KEY:
-        return "⚠️ የOpenRouter AI አገልግሎት ቁልፍ አልተገኘም።"
+    if not GEMINI_API_KEY:
+        return "⚠️ የGemini AI አገልግሎት ቁልፍ አልተገኘም።"
     
     try:
-        # የጥያቄ ይዘት ማዘጋጀት
         if text:
             user_content = f"{prompt}\n\nየመድኃኒቱ ስም፦ {text}"
+            payload = {
+                "contents": [{
+                    "parts": [{"text": user_content}]
+                }]
+            }
         elif image_bytes:
             base64_image = base64.b64encode(image_bytes).decode('utf-8')
-            user_content = [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-            ]
+            payload = {
+                "contents": [{
+                    "parts": [
+                        {"text": prompt},
+                        {"inline_data": {"mime_type": "image/jpeg", "data": base64_image}}
+                    ]
+                }]
+            }
         else:
             return "❌ ምንም መረጃ አልተላከም።"
         
-        # ✅ ትክክለኛው የOpenRouter ጥሪ
-        response = requests.post(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "HTTP-Referer": "https://alnoor-pharmacy-bot.onrender.com",
-                "X-OpenRouter-Title": "Al-Noor Pharmacy Bot",
-                "Content-Type": "application/json"
-            },
-            data=json.dumps({
-                "model": OPENROUTER_MODEL,
-                "messages": [
-                    {"role": "system", "content": "አንተ የመድሃኒት ባለሙያ ነህ። መረጃህን በአማርኛ ስጥ።"},
-                    {"role": "user", "content": user_content}
-                ],
-                "temperature": 0.7,
-                "max_tokens": 1024
-            }),
-            timeout=60
-        )
+        headers = {"Content-Type": "application/json"}
+        
+        # ✅ የጊዜ ገደብ ጨምር (60 → 120 ሰከንድ)
+        response = requests.post(GEMINI_API_URL, json=payload, headers=headers, timeout=120)
         
         if response.status_code != 200:
             error_detail = response.text
-            logging.error(f"OpenRouter API Error {response.status_code}: {error_detail}")
+            logging.error(f"Gemini API Error {response.status_code}: {error_detail}")
             
             if "API key" in error_detail:
-                return "⚠️ የOpenRouter API ቁልፍ ትክክል አይደለም።"
+                return "⚠️ የGemini API ቁልፍ ትክክል አይደለም።"
             elif "quota" in error_detail.lower():
-                return "⚠️ የነጻ ጥቅም ገደብ አልፏል። እባክዎ በኋላ ይሞክሩ።"
+                return "⚠️ የነጻ ጥቅም ገደብ አልፏል። እባክዎ ነገ ከጠዋቱ 3:00 ጀምሮ ይሞክሩ።"
+            elif "model" in error_detail.lower() or "not found" in error_detail.lower():
+                return f"⚠️ ሞዴሉ '{GEMINI_MODEL}' አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
             else:
-                return f"❌ የOpenRouter API ስህተት፦ {response.status_code}"
+                return f"❌ የGemini API ስህተት፦ {response.status_code}"
         
         result = response.json()
-        return result['choices'][0]['message']['content']
+        if 'candidates' in result and len(result['candidates']) > 0:
+            return result['candidates'][0]['content']['parts'][0]['text']
+        else:
+            return "❌ ምንም መልስ አልተገኘም።"
             
     except requests.exceptions.Timeout:
         return "⏱️ የጊዜ ገደብ አልፏል። እባክዎ የመድኃኒቱን ስም በጽሑፍ ይላኩልን።"
     except Exception as e:
-        logging.error(f"OpenRouter API error: {e}")
+        logging.error(f"Gemini API error: {e}")
         return f"❌ መረጃውን መተንተን አልተቻለም። {str(e)[:100]}"
-
-# ----------------- AI የመድኃኒት መረጃ ማብራሪያ SECTION -----------------
 
 async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -315,9 +310,9 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if msg.text == "🏠 ወደ ዋና ገጽ":
         return await start(update, context)
 
-    if not OPENROUTER_API_KEY:
+    if not GEMINI_API_KEY:
         await msg.reply_text(
-            "⚠️ የ AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
+            "⚠️ የ Gemini AI አገልግሎቱ ለጊዜው አልተዋቀረም።",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         return ConversationHandler.END
@@ -328,7 +323,7 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prompt = f"ስለ {msg.text} መድኃኒት መረጃ ስጥ፦ ስም፣ ጥቅም፣ አወሳሰድ፣ ጎንዮሽ ጉዳቶች"
         
         try:
-            response_text = await analyze_with_openrouter(prompt, text=msg.text)
+            response_text = await analyze_with_gemini(prompt, text=msg.text)
             await msg.reply_text(
                 f"💡 የመድኃኒት መረጃ፦\n\n{response_text}\n\n"
                 f"⚠️ *ማስታወሻ፦ ይህ መረጃ ለግንዛቤ ብቻ ነው።*",
@@ -344,17 +339,14 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await msg.reply_text("⏳ መረጃው በ AI በመተንተን ላይ ነው... እባክዎ ትንሽ ይጠብቁ...")
 
-prompt = (
-    "እባክህ ስለ መድሃኒት ትክክለኛ እና አስተማማኝ መረጃ ስጥ።\n\n"
-    "የሚከተለውን መድሃኒት በዚህ ቅርጸት አብራራ፦\n\n"
-    "1. ትክክለኛ የመድሃኒቱ ስም\n"
-    "2. ዋነኛ ጥቅም (ለምን ይውላል)\n"
-    "3. አወሳሰድ (እንዴት እንደሚወሰድ)\n"
-    "4. ሊከሰቱ የሚችሉ የጎንዮሽ ጉዳቶች\n"
-    "5. ጥንቃቄዎች እና ማስጠንቀቂያዎች\n\n"
-    "ማስታወሻ፦ መረጃው ከታወቁ የጤና ምንጮች የተወሰደ እና ለግንዛቤ ብቻ መሆኑን ግለጽ።\n\n"
-    "መድሃኒቱ፦ {medicine_name}"
-)
+    prompt = (
+        "እባክህ የዚህን መድኃኒት ወይም የሐኪም ማዘዣ ፎቶ መዝገብ ተንትነህ በሚከተለው መልኩ በአማርኛ አብራራ፦\n"
+        "1. የመድኃኒቱ ስም (Medication Name)\n"
+        "2. ዋነኛ ጥቅም (Primary Usage)\n"
+        "3. አወሳሰድ እና ጥንቃቄዎች (Dosage & Precautions)\n"
+        "4. ሊከሰቱ የሚችሉ የጎንዮሽ ጉዳቶች (Side Effects)\n\n"
+        "ማስታወሻ፦ መረጃው ለግንዛቤ ብቻ እንደሆነ እና የሐኪም ምክርን እንደማይተካ በጥሩ ስነ-ምግባር ግለጽ።"
+    )
 
     try:
         image_bytes = None
@@ -363,11 +355,11 @@ prompt = (
         if msg.photo:
             photo_file = await msg.photo[-1].get_file()
             image_bytes = await photo_file.download_as_bytearray()
-            response_text = await analyze_with_openrouter(prompt, text=None, image_bytes=image_bytes)
+            response_text = await analyze_with_gemini(prompt, text=None, image_bytes=image_bytes)
             
         elif msg.text:
             text = msg.text
-            response_text = await analyze_with_openrouter(prompt, text=text, image_bytes=None)
+            response_text = await analyze_with_gemini(prompt, text=text, image_bytes=None)
         else:
             await msg.reply_text(
                 "❌ የላኩት ግብዓት ስላልገባኝ ድጋሚ ይሞክሩ።",
@@ -383,7 +375,7 @@ prompt = (
         )
     except Exception as e:
         error_msg = str(e)
-        logging.error(f"OpenRouter error: {error_msg}")
+        logging.error(f"Gemini error: {error_msg}")
         
         if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
             await msg.reply_text(
@@ -399,6 +391,12 @@ prompt = (
                 "📅 እባክዎ ነገ ከጠዋቱ 3:00 ጀምሮ እንደገና ይሞክሩት!\n\n"
                 "🤖 AI መረጃውን በፍጥነት ይመልሳል።\n\n"
                 "💡 ወይም ትንሽ ቆይተው እንደገና ይሞክሩ።",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+        elif "model" in error_msg.lower() or "not found" in error_msg.lower():
+            await msg.reply_text(
+                f"⚠️ ሞዴሉ '{GEMINI_MODEL}' አልተገኘም።\n\n"
+                f"📝 እባክዎ አስተዳዳሪውን ያግኙ ወይም የመድኃኒቱን ስም በጽሑፍ ይላኩልን።",
                 reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
             )
         else:
