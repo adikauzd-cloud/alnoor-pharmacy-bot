@@ -239,7 +239,6 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
         return "⚠️ የOpenRouter AI አገልግሎት ቁልፍ አልተገኘም።"
     
     try:
-        # ✅ የጥያቄ ይዘት ማዘጋጀት
         if text:
             user_content = f"{prompt}\n\nየመድኃኒቱ ስም፦ {text}"
         elif image_bytes:
@@ -258,7 +257,6 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
             "X-Title": "Al-Noor Pharmacy Bot"
         }
         
-        # ✅ ትክክለኛ የጥያቄ ቅርጸት
         payload = {
             "model": OPENROUTER_MODEL,
             "messages": [
@@ -275,9 +273,9 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
             error_detail = response.text
             logging.error(f"OpenRouter API Error {response.status_code}: {error_detail}")
             
-            # ✅ ግልጽ የሆነ የስህተት መልእክት
+            # ✅ የተሻሻለ የስህተት መልእክት
             if "model" in error_detail.lower():
-                return "⚠️ የተመረጠው ሞዴል አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
+                return f"⚠️ ሞዴሉ '{OPENROUTER_MODEL}' አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
             elif "insufficient_quota" in error_detail:
                 return "⚠️ የነጻ ጥቅም ገደብ አልፏል። እባክዎ በኋላ ይሞክሩ።"
             else:
@@ -291,7 +289,6 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
     except Exception as e:
         logging.error(f"OpenRouter API error: {e}")
         return f"❌ መረጃውን መተንተን አልተቻለም። {str(e)[:100]}"
-
 # ----------------- AI የመድኃኒት መረጃ ማብራሪያ SECTION -----------------
 
 async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
