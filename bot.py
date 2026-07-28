@@ -238,9 +238,10 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
     """OpenRouter API በመጠቀም መድሃኒት ተንትን"""
     
     if not OPENROUTER_API_KEY:
-        return "⚠️ የOpenRouter AI አገልግሎት ቁልፍ አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
+        return "⚠️ የOpenRouter AI አገልግሎት ቁልፍ አልተገኘም።"
     
     try:
+        # የጥያቄ ይዘት ማዘጋጀት
         if text:
             user_content = f"{prompt}\n\nየመድኃኒቱ ስም፦ {text}"
         elif image_bytes:
@@ -252,31 +253,33 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
         else:
             return "❌ ምንም መረጃ አልተላከም።"
         
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://alnoor-pharmacy-bot.onrender.com",
-            "X-Title": "Al-Noor Pharmacy Bot"
-        }
-        
-        payload = {
-            "model": OPENROUTER_MODEL,
-            "messages": [
-                {"role": "system", "content": "አንተ የመድሃኒት ባለሙያ ነህ። መረጃህን በአማርኛ ስጥ።"},
-                {"role": "user", "content": user_content}
-            ],
-            "temperature": 0.7,
-            "max_tokens": 1024
-        }
-        
-        response = requests.post(OPENROUTER_API_URL, json=payload, headers=headers, timeout=60)
+        # ✅ ትክክለኛው የOpenRouter ጥሪ
+        response = requests.post(
+            url="https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "HTTP-Referer": "https://alnoor-pharmacy-bot.onrender.com",
+                "X-OpenRouter-Title": "Al-Noor Pharmacy Bot",
+                "Content-Type": "application/json"
+            },
+            data=json.dumps({
+                "model": OPENROUTER_MODEL,
+                "messages": [
+                    {"role": "system", "content": "አንተ የመድሃኒት ባለሙያ ነህ። መረጃህን በአማርኛ ስጥ።"},
+                    {"role": "user", "content": user_content}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 1024
+            }),
+            timeout=60
+        )
         
         if response.status_code != 200:
             error_detail = response.text
             logging.error(f"OpenRouter API Error {response.status_code}: {error_detail}")
             
             if "API key" in error_detail:
-                return "⚠️ የOpenRouter API ቁልፍ ትክክል አይደለም። እባክዎ ያረጋግጡ።"
+                return "⚠️ የOpenRouter API ቁልፍ ትክክል አይደለም።"
             elif "quota" in error_detail.lower():
                 return "⚠️ የነጻ ጥቅም ገደብ አልፏል። እባክዎ በኋላ ይሞክሩ።"
             else:
