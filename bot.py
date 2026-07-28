@@ -46,7 +46,7 @@ LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4Fmr
 # 🤖 Gemini AI Configuration
 # ==============================================================================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-pro")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash-8b")
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
 logging.basicConfig(
