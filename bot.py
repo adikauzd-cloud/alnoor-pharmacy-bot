@@ -324,18 +324,22 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
 
-    # ለተጠቃሚ መልእክት
-    await msg.reply_text("⏳ መረጃውን እያዘጋጀሁ ነው... ትንሽ ይጠብቁ...")
+    # ✅ የተሻሻለ መልእክት
+    wait_msg = await msg.reply_text("⏳ መረጃውን እያዘጋጀሁ ነው... እባክዎ ትንሽ ይጠብቁ...")
 
-    # ✅ የተሻሻለ ፕሮምፕት ተጠቀም
     prompt = get_medicine_prompt(msg.text)
 
     try:
-        response_text = await analyze_with_openrouter(prompt, text=msg.text)
+        # ✅ ከጊዜ ገደብ ጋር
+        response_text = await asyncio.wait_for(
+            analyze_with_openrouter(prompt, text=msg.text),
+            timeout=90.0  # 90 ሰከንድ
+        )
         
-        # መልሱን አስተካክል (አላስፈላጊ ቃላትን አስወግድ)
+        # መልሱን አስተካክል
         cleaned_response = clean_response(response_text)
         
+        await wait_msg.delete()
         await msg.reply_text(
             f"💡 **የመድኃኒት መረጃ**\n\n{cleaned_response}\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -343,16 +347,32 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
-    except Exception as e:
-        logging.error(f"Error: {e}")
-        await msg.reply_text(
-            f"❌ መረጃውን ማግኘት አልተቻለም።\n\n`{str(e)[:200]}`",
-            parse_mode="Markdown",
+    except asyncio.TimeoutError:
+        await wait_msg.edit_text(
+            "⏱️ የጊዜ ገደብ አልፏል።\n\n"
+            "📝 እባክዎ የመድኃኒቱን ስም በጽሑፍ ይላኩልን።\n"
+            "🤖 AI መረጃውን በፍጥነት ይመልሳል።\n\n"
+            "💡 ወይም ትንሽ ቆይተው እንደገና ይሞክሩ።",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
-
-    return ConversationHandler.END
-    MEDICINE_PROMPTS = {
+    except Exception as e:
+        error_msg = str(e)
+        logging.error(f"Error: {error_msg}")
+        
+        if "quota" in error_msg.lower():
+            await wait_msg.edit_text(
+                "⚠️ የዕለት ነጻ ጥቅል ገደብ አልፏል።\n\n"
+                "📅 እባክዎ ነገ ከጠዋቱ 3:00 ጀምሮ እንደገና ይሞክሩት!\n\n"
+                "🤖 AI መረጃውን በፍጥነት ይመልሳል።",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+        else:
+            await wait_msg.edit_text(
+                f"❌ መረጃውን ማግኘት አልተቻለም።\n\n`{error_msg[:200]}`",
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+MEDICINE_PROMPTS = {
     "amoxicillin": """
 ስለ Amoxicillin መድሃኒት የሚከተለውን መረጃ ስጥ፦
 
@@ -389,6 +409,8 @@ def clean_response(text):
     
     return text.strip()
 
+    return ConversationHandler.END
+    
 # ==============================================================================
 # የቀሩት ሁሉም HANDLERS
 # ==============================================================================
