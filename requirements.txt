@@ -1,4 +1,4 @@
 python-telegram-bot
-psycopg2-binary==2.9.9
+psycopg2-binary
 Flask==3.0.0
 requests==2.31.0
