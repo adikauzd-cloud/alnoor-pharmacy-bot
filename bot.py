@@ -59,6 +59,14 @@ logging.basicConfig(
 # 2. DATABASE INITIALIZATION
 # ==============================================================================
 
+def get_db_connection():
+    if DATABASE_URL:
+        db_url = DATABASE_URL.replace("postgres://", "postgresql://", 1) if DATABASE_URL.startswith("postgres://") else DATABASE_URL
+        return psycopg2.connect(db_url)
+    else:
+        import sqlite3
+        return sqlite3.connect("pharmacy_bot.db")
+
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -74,9 +82,7 @@ def init_db():
                 phone TEXT NOT NULL,
                 operating_hours TEXT DEFAULT 'ያልተጠቀሰ',
                 license_photo TEXT,
-                is_verified INTEGER DEFAULT 0,
-                latitude REAL,
-                longitude REAL
+                is_verified INTEGER DEFAULT 0
             )
         """)
     else:
@@ -89,11 +95,22 @@ def init_db():
                 phone TEXT NOT NULL,
                 operating_hours TEXT DEFAULT 'ያልተጠቀሰ',
                 license_photo TEXT,
-                is_verified INTEGER DEFAULT 0,
-                latitude REAL,
-                longitude REAL
+                is_verified INTEGER DEFAULT 0
             )
         """)
+    
+    # ✅ Add latitude and longitude columns if they don't exist
+    try:
+        cursor.execute("ALTER TABLE pharmacies ADD COLUMN latitude REAL")
+        logging.info("✅ latitude column added")
+    except Exception as e:
+        logging.info(f"latitude column already exists or error: {e}")
+    
+    try:
+        cursor.execute("ALTER TABLE pharmacies ADD COLUMN longitude REAL")
+        logging.info("✅ longitude column added")
+    except Exception as e:
+        logging.info(f"longitude column already exists or error: {e}")
     
     # Search history table
     if DATABASE_URL:
@@ -199,14 +216,7 @@ def init_db():
     
     conn.commit()
     conn.close()
-
-def get_db_connection():
-    if DATABASE_URL:
-        db_url = DATABASE_URL.replace("postgres://", "postgresql://", 1) if DATABASE_URL.startswith("postgres://") else DATABASE_URL
-        return psycopg2.connect(db_url)
-    else:
-        import sqlite3
-        return sqlite3.connect("pharmacy_bot.db")
+    logging.info("✅ Database initialized successfully")
 
 # ==============================================================================
 # 3. DATABASE HELPER FUNCTIONS
@@ -215,18 +225,36 @@ def get_db_connection():
 def register_pharmacy_db(chat_id, name, location, phone, operating_hours, license_photo, lat=None, lon=None):
     conn = get_db_connection()
     cursor = conn.cursor()
-    if DATABASE_URL:
-        cursor.execute("""
-            INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified, latitude, longitude)
-            VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s) RETURNING id
-        """, (chat_id, name, location, phone, operating_hours, license_photo, lat, lon))
-        pharmacy_id = cursor.fetchone()[0]
-    else:
-        cursor.execute("""
-            INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified, latitude, longitude)
-            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
-        """, (chat_id, name, location, phone, operating_hours, license_photo, lat, lon))
-        pharmacy_id = cursor.lastrowid
+    try:
+        # ✅ Try with latitude and longitude
+        if DATABASE_URL:
+            cursor.execute("""
+                INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified, latitude, longitude)
+                VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s) RETURNING id
+            """, (chat_id, name, location, phone, operating_hours, license_photo, lat, lon))
+            pharmacy_id = cursor.fetchone()[0]
+        else:
+            cursor.execute("""
+                INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified, latitude, longitude)
+                VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+            """, (chat_id, name, location, phone, operating_hours, license_photo, lat, lon))
+            pharmacy_id = cursor.lastrowid
+    except Exception as e:
+        # ✅ If latitude/longitude columns don't exist, insert without them
+        logging.warning(f"Inserting without latitude/longitude: {e}")
+        if DATABASE_URL:
+            cursor.execute("""
+                INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified)
+                VALUES (%s, %s, %s, %s, %s, %s, 0) RETURNING id
+            """, (chat_id, name, location, phone, operating_hours, license_photo))
+            pharmacy_id = cursor.fetchone()[0]
+        else:
+            cursor.execute("""
+                INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified)
+                VALUES (?, ?, ?, ?, ?, ?, 0)
+            """, (chat_id, name, location, phone, operating_hours, license_photo))
+            pharmacy_id = cursor.lastrowid
+    
     conn.commit()
     conn.close()
     return pharmacy_id
@@ -273,7 +301,10 @@ def get_all_verified_pharmacies():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, location, phone, operating_hours, latitude, longitude FROM pharmacies WHERE is_verified = 1")
+        try:
+            cursor.execute("SELECT id, name, location, phone, operating_hours, latitude, longitude FROM pharmacies WHERE is_verified = 1")
+        except:
+            cursor.execute("SELECT id, name, location, phone, operating_hours FROM pharmacies WHERE is_verified = 1")
         rows = cursor.fetchall()
         conn.close()
         return rows
@@ -1008,11 +1039,10 @@ async def list_pharmacies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     for pharmacy in pharmacies:
         try:
-            if len(pharmacy) >= 7:
-                pid, name, loc, phone, hours, lat, lon = pharmacy[:7]
-            else:
+            if len(pharmacy) >= 5:
                 pid, name, loc, phone, hours = pharmacy[:5]
-                lat, lon = None, None
+            else:
+                continue
             
             rank = pharm_rank.get(pid, '—')
             rank_emoji = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else f"#{rank}" if rank != '—' else ""
