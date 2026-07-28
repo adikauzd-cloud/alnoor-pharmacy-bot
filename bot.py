@@ -38,20 +38,16 @@ ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "0"))
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 if not BOT_TOKEN:
-    raise RuntimeError("❌ BOT_TOKEN environment variable ውስጥ አልተገኘም። እባክዎ ያስቀምጡት።")
+    raise RuntimeError("❌ BOT_TOKEN environment variable ውስጥ አልተገኘም።")
 
 LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
 
 # ==============================================================================
-# 🤖 Gemini AI Configuration - የተሻሻለ
+# 🤖 Gemini AI Configuration (የተስተካከለ)
 # ==============================================================================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")  # የተመከረ ነጻ ሞዴል
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-
-# ለማረጋገጫ
-if GEMINI_API_KEY and not GEMINI_API_KEY.startswith("AIza"):
-    logging.warning("⚠️ የGemini API ቁልፍ በ'AIza' መጀመር አለበት። እባክዎ ያረጋግጡ።")
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -235,17 +231,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==============================================================================
-# 🤖 AI Handler (Gemini - የተሻሻለ)
+# 🤖 AI Handler (Gemini 1.5 Flash - የተስተካከለ)
 # ==============================================================================
 
 async def analyze_with_gemini(prompt, text=None, image_bytes=None):
     """Gemini API በመጠቀም መድሃኒት ተንትን"""
     
     if not GEMINI_API_KEY:
-        return "⚠️ የGemini AI አገልግሎት ቁልፍ አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
+        return "⚠️ የGemini AI አገልግሎት ቁልፍ አልተገኘም።"
     
     try:
-        # የጥያቄ ይዘት ማዘጋጀት
         if text:
             user_content = f"{prompt}\n\nየመድኃኒቱ ስም፦ {text}"
             payload = {
@@ -254,7 +249,6 @@ async def analyze_with_gemini(prompt, text=None, image_bytes=None):
                 }]
             }
         elif image_bytes:
-            # Gemini ለፎቶ የሚሰራበት መንገድ
             base64_image = base64.b64encode(image_bytes).decode('utf-8')
             payload = {
                 "contents": [{
@@ -267,10 +261,7 @@ async def analyze_with_gemini(prompt, text=None, image_bytes=None):
         else:
             return "❌ ምንም መረጃ አልተላከም።"
         
-        headers = {
-            "Content-Type": "application/json"
-        }
-        
+        headers = {"Content-Type": "application/json"}
         response = requests.post(GEMINI_API_URL, json=payload, headers=headers, timeout=60)
         
         if response.status_code != 200:
@@ -278,17 +269,15 @@ async def analyze_with_gemini(prompt, text=None, image_bytes=None):
             logging.error(f"Gemini API Error {response.status_code}: {error_detail}")
             
             if "API key" in error_detail:
-                return "⚠️ የGemini API ቁልፍ ትክክል አይደለም። እባክዎ ያረጋግጡ።"
+                return "⚠️ የGemini API ቁልፍ ትክክል አይደለም።"
             elif "quota" in error_detail.lower():
-                return "⚠️ የዕለት ነጻ ጥቅል ገደብ አልፏል። እባክዎ ነገ ከጠዋቱ 3:00 ጀምሮ እንደገና ይሞክሩ።"
-            elif "model" in error_detail.lower() and "not found" in error_detail.lower():
+                return "⚠️ የነጻ ጥቅም ገደብ አልፏል። እባክዎ በኋላ ይሞክሩ።"
+            elif "model" in error_detail.lower() or "not found" in error_detail.lower():
                 return f"⚠️ ሞዴሉ '{GEMINI_MODEL}' አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
             else:
                 return f"❌ የGemini API ስህተት፦ {response.status_code}"
         
         result = response.json()
-        
-        # Gemini ምላሽ ማውጣት
         if 'candidates' in result and len(result['candidates']) > 0:
             return result['candidates'][0]['content']['parts'][0]['text']
         else:
@@ -299,8 +288,6 @@ async def analyze_with_gemini(prompt, text=None, image_bytes=None):
     except Exception as e:
         logging.error(f"Gemini API error: {e}")
         return f"❌ መረጃውን መተንተን አልተቻለም። {str(e)[:100]}"
-
-# ----------------- AI የመድኃኒት መረጃ ማብራሪያ SECTION -----------------
 
 async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -323,12 +310,11 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not GEMINI_API_KEY:
         await msg.reply_text(
-            "⚠️ የ Gemini AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
+            "⚠️ የ Gemini AI አገልግሎቱ ለጊዜው አልተዋቀረም።",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         return ConversationHandler.END
 
-    # ተጠቃሚው ጽሁፍ ከላከ በቀጥታ መልስ ስጥ
     if msg.text and msg.text not in ["📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ"]:
         await msg.reply_text("⏳ መረጃውን እያዘጋጀሁ ነው... ትንሽ ይጠብቁ...")
         
@@ -389,13 +375,18 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         error_msg = str(e)
         logging.error(f"Gemini error: {error_msg}")
         
-        # ✅ የተሻሻለ የስህተት መልእክት
         if "quota" in error_msg.lower():
             await msg.reply_text(
                 "⚠️ የዕለት ነጻ ጥቅል ገደብ አልፏል።\n\n"
                 "📅 እባክዎ ነገ ከጠዋቱ 3:00 ጀምሮ እንደገና ይሞክሩት!\n\n"
                 "🤖 AI መረጃውን በፍጥነት ይመልሳል።\n\n"
                 "💡 ወይም ትንሽ ቆይተው እንደገና ይሞክሩ።",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+        elif "model" in error_msg.lower() or "not found" in error_msg.lower():
+            await msg.reply_text(
+                f"⚠️ ሞዴሉ '{GEMINI_MODEL}' አልተገኘም።\n\n"
+                f"📝 እባክዎ አስተዳዳሪውን ያግኙ ወይም የመድኃኒቱን ስም በጽሑፍ ይላኩልን።",
                 reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
             )
         else:
@@ -408,7 +399,7 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==============================================================================
-# የቀሩት ሁሉም HANDLERS (አልተለወጡም)
+# የቀሩት ሁሉም HANDLERS
 # ==============================================================================
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -431,7 +422,7 @@ async def list_pharmacies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pharmacies = get_all_verified_pharmacies()
     if not pharmacies:
         await update.message.reply_text(
-            "ℹ️ በአሁኑ ሰዓት የተረጋገጡ ሕጋዊ ፋርማሲዎች አልተገኙም።\n(አዲስ ከተመዘገቡ በአድሚን 'Approve' መደረጋቸውን ያረጋግጡ)",
+            "ℹ️ በአሁኑ ሰዓት የተረጋገጡ ሕጋዊ ፋርማሲዎች አልተገኙም።",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         return
@@ -453,7 +444,7 @@ async def select_location_prompt(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_text(
         f"📍 የአካባቢ መምረጫ\n\n"
         f"አሁን የተመረጠው አካባቢ፦ {current_loc}\n\n"
-        f"እባክዎ የሚገኙበትን ወይም የሚቀርብዎትን ክፍለ ከተማ ከታች ካሉት አዝራሮች ይምረጡ ወይም ይጻፉልን፦",
+        f"እባክዎ የሚገኙበትን ክፍለ ከተማ ከታች ካሉት አዝራሮች ይምረጡ ወይም ይጻፉልን፦",
         reply_markup=ReplyKeyboardMarkup(LOCATION_KEYBOARD, resize_keyboard=True),
     )
     return WAITING_FOR_LOCATION_SET
@@ -466,28 +457,23 @@ async def save_user_location(update: Update, context: ContextTypes.DEFAULT_TYPE)
     selected_loc = msg.text
     context.user_data["user_location"] = selected_loc
     await msg.reply_text(
-        f"✅ አካባቢዎ በስኬት ወደ '{selected_loc}' ተቀይሯል!\n\n"
-        f"አሁን መድኃኒት ሲፈልጉ ጥያቄዎ በቅድሚያ ለ{selected_loc} አካባቢ ፋርማሲዎች ይላካል።",
+        f"✅ አካባቢዎ በስኬት ወደ '{selected_loc}' ተቀይሯል!",
         reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
     )
     return ConversationHandler.END
 
 async def prompt_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_loc = context.user_data.get("user_location")
-    loc_text = f"📍 የተመረጠው አካባቢ፦ {user_loc}\n\n" if user_loc else "📍 *(አካባቢ አልመረጡም - ጥያቄው ለሁሉም ፋርማሲዎች ይላካል)*\n\n"
+    loc_text = f"📍 የተመረጠው አካባቢ፦ {user_loc}\n\n" if user_loc else "📍 *(አካባቢ አልመረጡም)*\n\n"
     await update.message.reply_text(
         f"{loc_text}"
         f"እባክዎ የሚፈልጉትን መድኃኒት፦\n"
         f"1. በጽሑፍ የመድኃኒቱን ስም ይጻፉልን፡ ወይም\n"
-        f"2. የሐኪም ማዘዣውን (Prescription) ፎቶ አንስተው ይላኩልን።\n\n"
-        f"*(አካባቢ ለመቀየር '📍 አካባቢ ምረጥ' የሚለውን መጫን ይችላሉ)*",
+        f"2. የሐኪም ማዘዣውን (Prescription) ፎቶ አንስተው ይላኩልን።",
         reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
     )
     return WAITING_FOR_SEARCH
 
-# ============================================
-# 📝 handle_customer_request
-# ============================================
 async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg:
@@ -571,8 +557,7 @@ async def handle_pharmacy_response(update: Update, context: ContextTypes.DEFAULT
     if action == "available":
         msg_text = (
             "✅ 'መድኃኒቱ አለኝ' የሚለው ምላሽዎ ተመዝግቧል!\n\n"
-            "እባክዎ የመድኃቶቹን ዋጋ እና ተጨማሪ መረጃ ያስገቡ።\n\n"
-            "ምሳሌ አጻጻፍ፦\n• አሞክሳሲሊን - 150 ብር\n• ፓራሲታሞል - 50 ብር"
+            "እባክዎ የመድኃቶቹን ዋጋ እና ተጨማሪ መረጃ ያስገቡ።"
         )
         try:
             await query.edit_message_caption(caption=msg_text)
@@ -618,8 +603,7 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
                      f"📍 አካባቢ፦ {pharm_loc}\n"
                      f"📞 ስልክ፦ {pharm_phone}\n"
                      f"🕒 የስራ ሰዓት፦ {pharm_hours}\n\n"
-                     f"💰 የዋጋ እና የዝርዝር መረጃ፦\n{price_details}\n\n"
-                     f"📄 *እባክዎ በአካል ሲሄዱ የሐኪም ማዘዣ (Prescription) መያዝዎን አይረሱ!*",
+                     f"💰 የዋጋ እና የዝርዝር መረጃ፦\n{price_details}",
                 reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
             )
         except Exception as e:
