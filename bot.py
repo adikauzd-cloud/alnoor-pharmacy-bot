@@ -317,9 +317,30 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not GEMINI_API_KEY:
         await msg.reply_text(
-            "⚠️ የ Gemini AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
+            "⚠️ የ Gemini AI አገልግሎቱ ለጊዜው አልተዋቀረም።",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
+        return ConversationHandler.END
+
+    # ተጠቃሚው ጽሁፍ ከላከ በቀጥታ መልስ ስጥ
+    if msg.text and msg.text not in ["📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ"]:
+        await msg.reply_text("⏳ መረጃውን እያዘጋጀሁ ነው... ትንሽ ይጠብቁ...")
+        
+        prompt = f"ስለ {msg.text} መድኃኒት መረጃ ስጥ፦ ስም፣ ጥቅም፣ አወሳሰድ፣ ጎንዮሽ ጉዳቶች"
+        
+        try:
+            response_text = await analyze_with_gemini(prompt, text=msg.text)
+            await msg.reply_text(
+                f"💡 የመድኃኒት መረጃ፦\n\n{response_text}\n\n"
+                f"⚠️ *ማስታወሻ፦ ይህ መረጃ ለግንዛቤ ብቻ ነው።*",
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+        except Exception as e:
+            await msg.reply_text(
+                f"❌ መረጃውን ማግኘት አልተቻለም።\n\n`{str(e)[:200]}`",
+                parse_mode="Markdown"
+            )
         return ConversationHandler.END
 
     await msg.reply_text("⏳ መረጃው በ AI በመተንተን ላይ ነው... እባክዎ ትንሽ ይጠብቁ...")
@@ -359,12 +380,24 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
     except Exception as e:
-        logging.error(f"Gemini error: {e}")
-        await msg.reply_text(
-            f"❌ መረጃውን መተንተን አልተቻለም።\n\n`{str(e)[:200]}`",
-            parse_mode="Markdown",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
+        error_msg = str(e)
+        logging.error(f"Gemini error: {error_msg}")
+        
+        # ✅ የተሻሻለ የስህተት መልእክት
+        if "quota" in error_msg.lower():
+            await msg.reply_text(
+                "⚠️ የዕለት ነጻ ጥቅል ገደብ አልፏል።\n\n"
+                "📅 እባክዎ ነገ ከጠዋቱ 3:00 ጀምሮ እንደገና ይሞክሩት!\n\n"
+                "🤖 AI መረጃውን በፍጥነት ይመልሳል።\n\n"
+                "💡 ወይም ትንሽ ቆይተው እንደገና ይሞክሩ።",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+        else:
+            await msg.reply_text(
+                f"❌ መረጃውን መተንተን አልተቻለም።\n\n`{str(e)[:200]}`",
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
 
     return ConversationHandler.END
 
