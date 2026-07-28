@@ -46,7 +46,7 @@ LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4Fmr
 # 🤖 OpenRouter AI Configuration
 # ==============================================================================
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gopenai/gpt-4o-mini")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o-mini")
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 logging.basicConfig(
@@ -233,6 +233,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==============================================================================
 # 🤖 AI Handler (OpenRouter)
 # ==============================================================================
+
 async def analyze_with_openrouter_english(prompt, text=None, image_bytes=None):
     """OpenRouter API በመጠቀም መድሃኒት ተንትን - English Response"""
     
@@ -300,66 +301,6 @@ Include a disclaimer that this is for informational purposes only."""
         logging.error(f"OpenRouter API error: {e}")
         return f"❌ Error: {str(e)[:100]}"
 
-async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
-    """OpenRouter API በመጠቀም መድሃኒት ተንትን"""
-    
-    if not OPENROUTER_API_KEY:
-        return "⚠️ የOpenRouter AI አገልግሎት ቁልፍ አልተገኘም።"
-    
-    try:
-        if text:
-            user_content = f"{prompt}\n\nየመድኃኒቱ ስም፦ {text}"
-        elif image_bytes:
-            base64_image = base64.b64encode(image_bytes).decode('utf-8')
-            user_content = [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-            ]
-        else:
-            return "❌ ምንም መረጃ አልተላከም።"
-        
-        response = requests.post(
-            url=OPENROUTER_API_URL,
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://alnoor-pharmacy-bot.onrender.com",
-                "X-Title": "Al-Noor Pharmacy Bot"
-            },
-            json={
-                "model": OPENROUTER_MODEL,
-                "messages": [
-                    {"role": "system", "content": "አንተ የመድሃኒት ባለሙያ ነህ። መረጃህን በአማርኛ ስጥ።"},
-                    {"role": "user", "content": user_content}
-                ],
-                "temperature": 0.7,
-                "max_tokens": 1024
-            },
-            timeout=120
-        )
-        
-        if response.status_code != 200:
-            error_detail = response.text
-            logging.error(f"OpenRouter API Error {response.status_code}: {error_detail}")
-            
-            if "API key" in error_detail:
-                return "⚠️ የOpenRouter API ቁልፍ ትክክል አይደለም።"
-            elif "quota" in error_detail.lower():
-                return "⚠️ የነጻ ጥቅም ገደብ አልፏል። እባክዎ በኋላ ይሞክሩ።"
-            elif "model" in error_detail.lower():
-                return f"⚠️ ሞዴሉ '{OPENROUTER_MODEL}' አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
-            else:
-                return f"❌ የOpenRouter API ስህተት፦ {response.status_code}"
-        
-        result = response.json()
-        return result['choices'][0]['message']['content']
-            
-    except requests.exceptions.Timeout:
-        return "⏱️ የጊዜ ገደብ አልፏል። እባክዎ የመድኃኒቱን ስም በጽሑፍ ይላኩልን።"
-    except Exception as e:
-        logging.error(f"OpenRouter API error: {e}")
-        return f"❌ መረጃውን መተንተን አልተቻለም። {str(e)[:100]}"
-
 # ----------------- AI የመድኃኒት መረጃ ማብራሪያ SECTION -----------------
 
 async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -373,132 +314,6 @@ async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return WAITING_FOR_MED_INFO
 
-async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle translation button click"""
-    
-    query = update.callback_query
-    await query.answer()
-    
-    english_text = context.user_data.get("last_english_response")
-    if not english_text:
-        await query.edit_message_text(
-            "⚠️ No English text to translate. Please search for a medication first."
-        )
-        return
-
-    await query.edit_message_text("⏳ Translating to Amharic... Please wait...")
-
-    try:
-        translation_prompt = f"""Translate the following medical information to Amharic (Ethiopian language).
-Keep medical terms accurate.
-Use simple, clear Amharic.
-
-Original:
-{english_text}
-
-Amharic translation:"""
-
-        response = requests.post(
-            url=OPENROUTER_API_URL,
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://alnoor-pharmacy-bot.onrender.com",
-                "X-Title": "Al-Noor Pharmacy Bot"
-            },
-            json={
-                "model": OPENROUTER_MODEL,
-                "messages": [
-                    {"role": "system", "content": "You are a medical translator. Translate accurately."},
-                    {"role": "user", "content": translation_prompt}
-                ],
-                "temperature": 0.3,
-                "max_tokens": 1024
-            },
-            timeout=60
-        )
-        
-        if response.status_code == 200:
-            amharic_text = response.json()['choices'][0]['message']['content']
-            await query.edit_message_text(
-                f"💡 **Medical Information**\n\n"
-                f"📝 **Amharic / አማርኛ**\n{amharic_text}\n\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"📝 **English**\n{english_text}\n\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"⚠️ *This is for informational purposes only. Always consult your doctor.*",
-                parse_mode="Markdown"
-            )
-        else:
-            await query.edit_message_text("❌ Translation failed. Please try again.")
-            
-    except Exception as e:
-        await query.edit_message_text(f"❌ Translation error: {str(e)[:200]}")
-
-async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    if not msg:
-        return WAITING_FOR_MED_INFO
-
-    if msg.text == "🏠 ወደ ዋና ገጽ":
-        return await start(update, context)
-
-    if not OPENROUTER_API_KEY:
-        await msg.reply_text(
-            "⚠️ AI service is not configured.",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
-        return ConversationHandler.END
-
-    wait_msg = await msg.reply_text("⏳ Fetching medical information... Please wait...")
-
-    # ✅ Prompt in English for better accuracy
-    prompt = f"""Provide detailed medical information about the following medication:
-
-1. Name (generic and brand names if applicable)
-2. Primary uses and indications
-3. Dosage and administration
-4. Common side effects
-5. Precautions and contraindications
-
-Medication: {msg.text}"""
-
-    try:
-        # ✅ Get English response from AI
-        english_response = await analyze_with_openrouter_english(prompt, text=msg.text)
-        
-        if english_response.startswith("❌") or english_response.startswith("⚠️"):
-            await wait_msg.edit_text(english_response)
-            return ConversationHandler.END
-
-        # ✅ Store English response for translation
-        context.user_data["last_english_response"] = english_response
-
-        # ✅ Inline keyboard for translation
-        inline_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📝 Translate to Amharic", callback_data="translate_amharic")],
-            [InlineKeyboardButton("🏠 ወደ ዋና ገጽ", callback_data="go_home")]
-        ])
-
-        await wait_msg.delete()
-        await msg.reply_text(
-            f"💡 **Medical Information (English)**\n\n{english_response}\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⚠️ *This is for informational purposes only. Always consult your doctor.*",
-            parse_mode="Markdown",
-            reply_markup=inline_keyboard
-        )
-        
-    except Exception as e:
-        error_msg = str(e)
-        logging.error(f"Error: {error_msg}")
-        await wait_msg.edit_text(
-            f"❌ Failed to get information.\n\n`{error_msg[:200]}`",
-            parse_mode="Markdown",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
-
-    return ConversationHandler.END
 async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle translation button click - English to Amharic"""
     
@@ -575,6 +390,7 @@ Amharic translation:"""
             
     except Exception as e:
         await query.edit_message_text(f"❌ Translation error: {str(e)[:200]}")
+
 async def show_english_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show the original English response again"""
     
@@ -598,12 +414,75 @@ async def show_english_callback(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode="Markdown",
         reply_markup=inline_keyboard
     )
+
+async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg:
+        return WAITING_FOR_MED_INFO
+
+    if msg.text == "🏠 ወደ ዋና ገጽ":
+        return await start(update, context)
+
+    if not OPENROUTER_API_KEY:
+        await msg.reply_text(
+            "⚠️ AI service is not configured.",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        return ConversationHandler.END
+
+    wait_msg = await msg.reply_text("⏳ Fetching medical information... Please wait...")
+
+    # ✅ Prompt in English for better accuracy
+    prompt = f"""Provide detailed medical information about the following medication:
+
+1. Name (generic and brand names if applicable)
+2. Primary uses and indications
+3. Dosage and administration
+4. Common side effects
+5. Precautions and contraindications
+
+Medication: {msg.text}"""
+
+    try:
+        # ✅ Get English response from AI
+        english_response = await analyze_with_openrouter_english(prompt, text=msg.text)
+        
+        if english_response.startswith("❌") or english_response.startswith("⚠️"):
+            await wait_msg.edit_text(english_response)
+            return ConversationHandler.END
+
+        # ✅ Store English response for translation
+        context.user_data["last_english_response"] = english_response
+
+        # ✅ Inline keyboard for translation
+        inline_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📝 Translate to Amharic", callback_data="translate_amharic")],
+            [InlineKeyboardButton("🏠 ወደ ዋና ገጽ", callback_data="go_home")]
+        ])
+
+        await wait_msg.delete()
+        await msg.reply_text(
+            f"💡 **Medical Information (English)**\n\n{english_response}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"⚠️ *This is for informational purposes only. Always consult your doctor.*",
+            parse_mode="Markdown",
+            reply_markup=inline_keyboard
+        )
+        
+    except Exception as e:
+        error_msg = str(e)
+        logging.error(f"Error: {error_msg}")
+        await wait_msg.edit_text(
+            f"❌ Failed to get information.\n\n`{error_msg[:200]}`",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+
+    return ConversationHandler.END
+
 # ==============================================================================
 # የቀሩት ሁሉም HANDLERS
-# =============================================================================
-# በ main() ውስጥ
-app.add_handler(CallbackQueryHandler(translate_callback, pattern="^(translate_amharic|go_home)$"))
-app.add_handler(CallbackQueryHandler(show_english_callback, pattern="^show_english$"))
+# ==============================================================================
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_CHAT_ID:
@@ -975,7 +854,8 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^📞 እገዛ / ድጋፍ$"), show_help))
     app.add_handler(MessageHandler(filters.Regex("^📋 የፋርማሲዎች ዝርዝር$"), list_pharmacies))
     app.add_handler(CallbackQueryHandler(handle_admin_approval, pattern="^verify_"))
-    app.add_handler(CallbackQueryHandler(translate_callback, pattern="^translate_amharic$"))
+    app.add_handler(CallbackQueryHandler(translate_callback, pattern="^(translate_amharic|go_home)$"))
+    app.add_handler(CallbackQueryHandler(show_english_callback, pattern="^show_english$"))
 
     app.add_handler(loc_conv)
     app.add_handler(search_conv)
