@@ -319,95 +319,55 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not OPENROUTER_API_KEY:
         await msg.reply_text(
-            "⚠️ የ AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
+            "⚠️ የ AI አገልግሎቱ ለጊዜው አልተዋቀረም።",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         return ConversationHandler.END
 
-    if msg.text and msg.text not in ["📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ"]:
-        await msg.reply_text("⏳ መረጃውን እያዘጋጀሁ ነው... ትንሽ ይጠብቁ...")
-        
-        prompt = f"ስለ {msg.text} መድኃኒት መረጃ ስጥ፦ ስም፣ ጥቅም፣ አወሳሰድ፣ ጎንዮሽ ጉዳቶች"
-        
-        try:
-            response_text = await analyze_with_openrouter(prompt, text=msg.text)
-            await msg.reply_text(
-                f"💡 የመድኃኒት መረጃ፦\n\n{response_text}\n\n"
-                f"⚠️ *ማስታወሻ፦ ይህ መረጃ ለግንዛቤ ብቻ ነው።*",
-                parse_mode="Markdown",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-        except Exception as e:
-            await msg.reply_text(
-                f"❌ መረጃውን ማግኘት አልተቻለም።\n\n`{str(e)[:200]}`",
-                parse_mode="Markdown"
-            )
-        return ConversationHandler.END
+    # ለተጠቃሚ መልእክት
+    await msg.reply_text("⏳ መረጃውን እያዘጋጀሁ ነው... ትንሽ ይጠብቁ...")
 
-    await msg.reply_text("⏳ መረጃው በ AI በመተንተን ላይ ነው... እባክዎ ትንሽ ይጠብቁ...")
-
-    prompt = (
-        "እባክህ የዚህን መድኃኒት ወይም የሐኪም ማዘዣ ፎቶ መዝገብ ተንትነህ በሚከተለው መልኩ በአማርኛ አብራራ፦\n"
-        "1. የመድኃኒቱ ስም (Medication Name)\n"
-        "2. ዋነኛ ጥቅም (Primary Usage)\n"
-        "3. አወሳሰድ እና ጥንቃቄዎች (Dosage & Precautions)\n"
-        "4. ሊከሰቱ የሚችሉ የጎንዮሽ ጉዳቶች (Side Effects)\n\n"
-        "ማስታወሻ፦ መረጃው ለግንዛቤ ብቻ እንደሆነ እና የሐኪም ምክርን እንደማይተካ በጥሩ ስነ-ምግባር ግለጽ።"
-    )
+    # ✅ የተሻሻለ ፕሮምፕት ተጠቀም
+    prompt = get_medicine_prompt(msg.text)
 
     try:
-        image_bytes = None
-        text = None
+        response_text = await analyze_with_openrouter(prompt, text=msg.text)
         
-        if msg.photo:
-            photo_file = await msg.photo[-1].get_file()
-            image_bytes = await photo_file.download_as_bytearray()
-            response_text = await analyze_with_openrouter(prompt, text=None, image_bytes=image_bytes)
-            
-        elif msg.text:
-            text = msg.text
-            response_text = await analyze_with_openrouter(prompt, text=text, image_bytes=None)
-        else:
-            await msg.reply_text(
-                "❌ የላኩት ግብዓት ስላልገባኝ ድጋሚ ይሞክሩ።",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-            return ConversationHandler.END
-
+        # መልሱን አስተካክል (አላስፈላጊ ቃላትን አስወግድ)
+        cleaned_response = clean_response(response_text)
+        
         await msg.reply_text(
-            f"💡 የመድኃኒት መረጃ ማብራሪያ፦\n\n{response_text}\n\n"
-            f"⚠️ *ማስታወሻ፦ ይህ መረጃ በ AI የተዘጋጀ ለግንዛቤ ብቻ የሚያገለግል ነው። ሁልጊዜ የሐኪምዎን ወይም የፋርማሲስቱን መመሪያ ይከተሉ።*",
+            f"💡 **የመድኃኒት መረጃ**\n\n{cleaned_response}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"⚠️ *ማስታወሻ፦ ይህ መረጃ ለግንዛቤ ብቻ ነው። ሁልጊዜ የሐኪምዎን መመሪያ ይከተሉ።*",
             parse_mode="Markdown",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
     except Exception as e:
-        error_msg = str(e)
-        logging.error(f"OpenRouter error: {error_msg}")
-        
-        if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
-            await msg.reply_text(
-                "⏱️ የጊዜ ገደብ አልፏል።\n\n"
-                "📝 እባክዎ የመድኃኒቱን ስም በጽሑፍ ይላኩልን።\n"
-                "🤖 AI መረጃውን በፍጥነት ይመልሳል።\n\n"
-                "💡 ወይም ትንሽ ቆይተው እንደገና ይሞክሩ።",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-        elif "quota" in error_msg.lower():
-            await msg.reply_text(
-                "⚠️ የዕለት ነጻ ጥቅል ገደብ አልፏል።\n\n"
-                "📅 እባክዎ ነገ ከጠዋቱ 3:00 ጀምሮ እንደገና ይሞክሩት!\n\n"
-                "🤖 AI መረጃውን በፍጥነት ይመልሳል።\n\n"
-                "💡 ወይም ትንሽ ቆይተው እንደገና ይሞክሩ።",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-        else:
-            await msg.reply_text(
-                f"❌ መረጃውን መተንተን አልተቻለም።\n\n`{str(e)[:200]}`",
-                parse_mode="Markdown",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
+        logging.error(f"Error: {e}")
+        await msg.reply_text(
+            f"❌ መረጃውን ማግኘት አልተቻለም።\n\n`{str(e)[:200]}`",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
 
     return ConversationHandler.END
+
+def clean_response(text):
+    """አላስፈላጊ ቃላትን አስወግድ"""
+    # የተለመዱ ግራ የሚያጋቡ ቃላትን አስወግድ
+    unwanted_phrases = [
+        "እባክህ", "እባክዎ", "በመሰረቱ", "በአጠቃላይ",
+        "ሊሆን ይችላል", "ሊቻል", "በዚህ መሰረት"
+    ]
+    for phrase in unwanted_phrases:
+        text = text.replace(phrase, "")
+    
+    # ተደጋጋሚ ክፍተቶችን አስወግድ
+    while "  " in text:
+        text = text.replace("  ", " ")
+    
+    return text.strip()
 
 # ==============================================================================
 # የቀሩት ሁሉም HANDLERS
