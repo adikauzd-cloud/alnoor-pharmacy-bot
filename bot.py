@@ -56,7 +56,7 @@ logging.basicConfig(
 )
 
 # ==============================================================================
-# 2. DATABASE INITIALIZATION WITH NEW TABLES
+# 2. DATABASE INITIALIZATION
 # ==============================================================================
 
 def init_db():
@@ -168,6 +168,32 @@ def init_db():
                 medicine_name TEXT NOT NULL,
                 price TEXT,
                 response_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    
+    # 📢 Notifications table
+    if DATABASE_URL:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS notifications (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                pharmacy_id INTEGER,
+                type TEXT NOT NULL,
+                message TEXT NOT NULL,
+                is_read BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    else:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                pharmacy_id INTEGER,
+                type TEXT NOT NULL,
+                message TEXT NOT NULL,
+                is_read BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
     
@@ -404,7 +430,99 @@ def get_top_pharmacies(limit=10):
         return []
 
 # ==============================================================================
-# 7. STATES & KEYBOARDS
+# 7. 📢 NOTIFICATION SYSTEM
+# ==============================================================================
+
+def save_notification(user_id, pharmacy_id, notification_type, message):
+    """Save notification to database"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"""
+            INSERT INTO notifications (user_id, pharmacy_id, type, message)
+            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder})
+        """, (user_id, pharmacy_id, notification_type, message))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logging.error(f"Save notification error: {e}")
+        return False
+
+def get_notifications(user_id, limit=10):
+    """Get user notifications"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"""
+            SELECT id, type, message, is_read, created_at FROM notifications 
+            WHERE user_id = {placeholder} 
+            ORDER BY created_at DESC LIMIT {placeholder}
+        """, (user_id, limit))
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+    except Exception as e:
+        logging.error(f"Get notifications error: {e}")
+        return []
+
+def mark_notification_read(notification_id):
+    """Mark notification as read"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"UPDATE notifications SET is_read = TRUE WHERE id = {placeholder}", (notification_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logging.error(f"Mark notification read error: {e}")
+        return False
+
+def get_unread_notification_count(user_id):
+    """Get unread notification count"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"SELECT COUNT(*) FROM notifications WHERE user_id = {placeholder} AND is_read = FALSE", (user_id,))
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+    except Exception as e:
+        logging.error(f"Get unread count error: {e}")
+        return 0
+
+async def send_telegram_notification(context, user_id, message):
+    """Send Telegram notification to user"""
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"🔔 {message}",
+            parse_mode="Markdown"
+        )
+        return True
+    except Exception as e:
+        logging.error(f"Telegram notification error: {e}")
+        return False
+
+async def send_sms_notification(phone_number, message):
+    """Send SMS notification (placeholder - use Twilio or similar)"""
+    # TODO: Integrate Twilio or other SMS service
+    logging.info(f"SMS to {phone_number}: {message}")
+    return True
+
+async def send_push_notification(user_id, message):
+    """Send push notification (placeholder - use Firebase or similar)"""
+    # TODO: Integrate Firebase Cloud Messaging
+    logging.info(f"Push to {user_id}: {message}")
+    return True
+
+# ==============================================================================
+# 8. STATES & KEYBOARDS
 # ==============================================================================
 WAITING_FOR_SEARCH = 1
 WAITING_FOR_PRICE = 2
@@ -420,8 +538,8 @@ REG_LICENSE = 13
 MAIN_KEYBOARD = [
     ["🔍 መድኃኒት ፈልግ", "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ"],
     ["📍 አካባቢ ምረጥ", "📋 የፋርማሲዎች ዝርዝር"],
-    ["🏥 ፋርማሲ መዝግብ", "📞 እገዛ / ድጋፍ"],
-    ["🏠 ወደ ዋና ገጽ"]
+    ["🏥 ፋርማሲ መዝግብ", "🔔 ማሳወቂያዎች"],
+    ["📞 እገዛ / ድጋፍ", "🏠 ወደ ዋና ገጽ"]
 ]
 
 LOCATION_KEYBOARD = [
@@ -438,7 +556,7 @@ HOURS_KEYBOARD = [
 ]
 
 # ==============================================================================
-# 8. TRANSLATION FUNCTION
+# 9. TRANSLATION FUNCTION
 # ==============================================================================
 
 async def translate_to_amharic(english_text):
@@ -477,7 +595,7 @@ def clean_translation(text):
     return '\n'.join(unique_lines)
 
 # ==============================================================================
-# 9. AI HANDLER
+# 10. AI HANDLER
 # ==============================================================================
 
 import time
@@ -558,11 +676,17 @@ Include a disclaimer that this is for informational purposes only."""
         return f"❌ Error: {str(e)[:100]}"
 
 # ==============================================================================
-# 10. HANDLERS
+# 11. HANDLERS
 # ==============================================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name if update.effective_user else "ወዳጄ"
+    
+    # Check unread notifications
+    user_id = update.effective_user.id
+    unread_count = get_unread_notification_count(user_id)
+    notification_text = f" 🔔{unread_count}" if unread_count > 0 else ""
+    
     welcome_text = (
         f"👋 ሰላም {user_name}! ወደ አል-ኑር መድኃኒት አፋላጊ በደህና መጡ።\n\n"
         f"━━━━━━━ ⚖️ ሕጋዊ ማስታወቂያ ━━━━━━━\n"
@@ -589,88 +713,67 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     return ConversationHandler.END
 
-# ----------------- /stats COMMAND (ለሁሉም ተጠቃሚዎች) -----------------
+# ==============================================================================
+# 📢 NOTIFICATION HANDLERS
+# ==============================================================================
 
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """📊 የስርዓት ስታቲስቲክስ - ለሁሉም ተጠቃሚዎች"""
-    
+async def show_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show user notifications"""
     user_id = update.effective_user.id
+    notifications = get_notifications(user_id, 10)
     
-    # Check if user is admin
-    is_admin = (user_id == ADMIN_CHAT_ID)
-    
-    ai_stats = get_ai_stats()
-    total_pharms = get_bot_statistics()
-    top_meds = get_top_medicines(5)
-    top_pharms = get_top_pharmacies(5)
-    search_history = get_user_search_history(user_id, 5)
-    
-    text = f"📊 **የስርዓት ስታቲስቲክስ**\n\n"
-    text += f"🤖 **AI አጠቃቀም**\n"
-    text += f"• ጠቅላላ ጥያቄዎች: {ai_stats['total']}\n"
-    text += f"• ስኬታማ: {ai_stats['successful']}\n"
-    
-    # Show errors only for admin
-    if is_admin:
-        text += f"• ስህተቶች: {ai_stats['errors']}\n"
-    
-    text += f"• አማካይ ምላሽ ጊዜ: {ai_stats['avg_time']} ሰከንድ\n\n"
-    
-    text += f"🏥 **ፋርማሲዎች**\n"
-    text += f"• ጠቅላላ: {total_pharms[0]}\n"
-    text += f"• የተረጋገጡ: {total_pharms[1]}\n"
-    
-    # Show pending only for admin
-    if is_admin:
-        text += f"• ማረጋገጫ የሚጠብቁ: {total_pharms[2]}\n"
-    text += "\n"
-    
-    if top_meds:
-        text += f"🏆 **ከፍተኛ መድኃኒቶች**\n"
-        for idx, (med, count) in enumerate(top_meds, 1):
-            text += f"• {idx}. {med} ({count} ጊዜ)\n"
-        text += "\n"
-    
-    if top_pharms:
-        text += f"🏆 **ከፍተኛ ፋርማሲዎች**\n"
-        for idx, (pid, name, loc, phone, count) in enumerate(top_pharms, 1):
-            text += f"• {idx}. {name} ({count} ምላሾች)\n"
-        text += "\n"
-    
-    if search_history:
-        text += f"📝 **የቅርብ ጊዜ ፍለጋዎች**\n"
-        for med, date in search_history:
-            date_str = date.strftime('%Y-%m-%d %H:%M') if isinstance(date, datetime) else str(date)
-            text += f"• {med} - {date_str}\n"
-    
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
-
-# ----------------- ADMIN STATS (ለአድሚን ብቻ) -----------------
-
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_CHAT_ID:
-        await update.message.reply_text("⛔ ይቅርታ! ይህንን ትዕዛዝ መጠቀም የሚችለው አድሚኑ ብቻ ነው።")
+    if not notifications:
+        await update.message.reply_text(
+            "🔔 ምንም አዲስ ማሳወቂያ የለም።",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
         return
-
-    total, verified, pending = get_bot_statistics()
-    ai_stats = get_ai_stats()
     
-    stats_text = (
-        f"📊 **የአድሚን ስታቲስቲክስ**\n\n"
-        f"🤖 **AI አጠቃቀም**\n"
-        f"• ጠቅላላ ጥያቄዎች: {ai_stats['total']}\n"
-        f"• ስኬታማ: {ai_stats['successful']}\n"
-        f"• ስህተቶች: {ai_stats['errors']}\n"
-        f"• አማካይ ምላሽ ጊዜ: {ai_stats['avg_time']} ሰከንድ\n\n"
-        f"🏥 **ፋርማሲዎች**\n"
-        f"• ጠቅላላ የተመዘገቡ: {total}\n"
-        f"• የተረጋገጡ (ሕጋዊ): {verified}\n"
-        f"• ማረጋገጫ የሚጠብቁ (Pending): {pending}\n\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"🤖 *አል-ኑር መድኃኒት አፋላጊ ሲስተም*"
+    text = "🔔 **ማሳወቂያዎች**\n\n"
+    for notif in notifications:
+        notif_id, notif_type, message, is_read, created_at = notif
+        read_emoji = "✅" if is_read else "🆕"
+        time_str = created_at.strftime('%Y-%m-%d %H:%M') if hasattr(created_at, 'strftime') else str(created_at)
+        text += f"{read_emoji} {message}\n"
+        text += f"   📅 {time_str}\n"
+        text += "────────────────────\n"
+        
+        if not is_read:
+            mark_notification_read(notif_id)
+    
+    await update.message.reply_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
     )
-    await update.message.reply_text(stats_text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
+
+async def send_order_notification(context, pharmacy_chat_id, customer_id, medicine_name, order_time):
+    """Send notification about new order to pharmacy"""
+    message = (
+        f"🆕 **አዲስ የመድኃኒት ትዕዛዝ!**\n\n"
+        f"💊 መድኃኒት: {medicine_name}\n"
+        f"📅 የታዘዘበት ቀን: {order_time.strftime('%Y-%m-%d')}\n"
+        f"🕐 የታዘዘበት ሰዓት: {order_time.strftime('%H:%M')}\n\n"
+        f"👤 ደንበኛ: {customer_id}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚡ *እባክዎ በፍጥነት ምላሽ ይስጡ!*"
+    )
+    
+    # Save to database
+    save_notification(pharmacy_chat_id, None, "order", message)
+    
+    # Send Telegram notification
+    await send_telegram_notification(context, pharmacy_chat_id, message)
+    
+    # TODO: Send SMS if pharmacy has phone number
+    # await send_sms_notification(pharmacy_phone, message)
+    
+    # TODO: Send push notification
+    # await send_push_notification(pharmacy_chat_id, message)
+
+# ==============================================================================
+# 12. MEDICINE INFO HANDLERS
+# ==============================================================================
 
 async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -679,7 +782,10 @@ async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "1. የመድኃኒቱን ስም በጽሑፍ ይጻፉልን፡ ወይም\n"
         "2. የሐኪም ማዘዣውን (Prescription) ፎቶ አንስተው ይላኩልን።\n\n"
         "🤖 *AI መድኃኒቱ ለምን እንደሚያገለግል፣ አወሳሰዱን እና ጥንቃቄዎችን ያብራራልዎታል።*",
-        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        reply_markup=ReplyKeyboardMarkup(
+            [["🏠 ወደ ዋና ገጽ"]],
+            resize_keyboard=True
+        )
     )
     return WAITING_FOR_MED_INFO
 
@@ -757,7 +863,8 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return WAITING_FOR_MED_INFO
 
     if msg.text == "🏠 ወደ ዋና ገጽ":
-        return await start(update, context)
+        await start(update, context)
+        return ConversationHandler.END
 
     if not OPENROUTER_API_KEY:
         await msg.reply_text(
@@ -847,11 +954,100 @@ Medication: {text}"""
 
     return ConversationHandler.END
 
+# ==============================================================================
+# 13. STATS AND LIST HANDLERS
+# ==============================================================================
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """📊 የስርዓት ስታቲስቲክስ - ለሁሉም ተጠቃሚዎች"""
+    
+    user_id = update.effective_user.id
+    is_admin = (user_id == ADMIN_CHAT_ID)
+    
+    ai_stats = get_ai_stats()
+    total_pharms = get_bot_statistics()
+    top_meds = get_top_medicines(5)
+    top_pharms = get_top_pharmacies(5)
+    search_history = get_user_search_history(user_id, 5)
+    unread_count = get_unread_notification_count(user_id)
+    
+    text = f"📊 **የስርዓት ስታቲስቲክስ**\n\n"
+    text += f"🔔 ያልተነበቡ ማሳወቂያዎች: {unread_count}\n\n"
+    text += f"🤖 **AI አጠቃቀም**\n"
+    text += f"• ጠቅላላ ጥያቄዎች: {ai_stats['total']}\n"
+    text += f"• ስኬታማ: {ai_stats['successful']}\n"
+    if is_admin:
+        text += f"• ስህተቶች: {ai_stats['errors']}\n"
+    text += f"• አማካይ ምላሽ ጊዜ: {ai_stats['avg_time']} ሰከንድ\n\n"
+    
+    text += f"🏥 **ፋርማሲዎች**\n"
+    text += f"• ጠቅላላ: {total_pharms[0]}\n"
+    text += f"• የተረጋገጡ: {total_pharms[1]}\n"
+    if is_admin:
+        text += f"• ማረጋገጫ የሚጠብቁ: {total_pharms[2]}\n"
+    text += "\n"
+    
+    if top_meds:
+        text += f"🏆 **ከፍተኛ መድኃኒቶች**\n"
+        for idx, (med, count) in enumerate(top_meds, 1):
+            text += f"• {idx}. {med} ({count} ጊዜ)\n"
+        text += "\n"
+    
+    if top_pharms:
+        text += f"🏆 **ከፍተኛ ፋርማሲዎች**\n"
+        for idx, (pid, name, loc, phone, count) in enumerate(top_pharms, 1):
+            text += f"• {idx}. {name} ({count} ምላሾች)\n"
+        text += "\n"
+    
+    if search_history:
+        text += f"📝 **የቅርብ ጊዜ ፍለጋዎች**\n"
+        for med, date in search_history:
+            date_str = date.strftime('%Y-%m-%d %H:%M') if isinstance(date, datetime) else str(date)
+            text += f"• {med} - {date_str}\n"
+    
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
+
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ ይቅርታ! ይህንን ትዕዛዝ መጠቀም የሚችለው አድሚኑ ብቻ ነው።")
+        return
+
+    total, verified, pending = get_bot_statistics()
+    ai_stats = get_ai_stats()
+    
+    stats_text = (
+        f"📊 **የአድሚን ስታቲስቲክስ**\n\n"
+        f"🤖 **AI አጠቃቀም**\n"
+        f"• ጠቅላላ ጥያቄዎች: {ai_stats['total']}\n"
+        f"• ስኬታማ: {ai_stats['successful']}\n"
+        f"• ስህተቶች: {ai_stats['errors']}\n"
+        f"• አማካይ ምላሽ ጊዜ: {ai_stats['avg_time']} ሰከንድ\n\n"
+        f"🏥 **ፋርማሲዎች**\n"
+        f"• ጠቅላላ የተመዘገቡ: {total}\n"
+        f"• የተረጋገጡ (ሕጋዊ): {verified}\n"
+        f"• ማረጋገጫ የሚጠብቁ (Pending): {pending}\n\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"🤖 *አል-ኑር መድኃኒት አፋላጊ ሲስተም*"
+    )
+    await update.message.reply_text(stats_text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
+
 async def list_pharmacies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """📋 የፋርማሲዎች ዝርዝር ከደረጃ ጋር"""
+    
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        msg = query.message
+    else:
+        msg = update.message
+    
+    if not msg:
+        return
+
     pharmacies = get_all_verified_pharmacies()
     if not pharmacies:
-        await update.message.reply_text(
+        await msg.reply_text(
             "ℹ️ በአሁኑ ሰዓት የተረጋገጡ ሕጋዊ ፋርማሲዎች አልተገኙም።",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
@@ -872,11 +1068,15 @@ async def list_pharmacies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "────────────────────\n"
         
         if len(text) > 3500:
-            await update.message.reply_text(text, parse_mode="Markdown")
+            await msg.reply_text(text, parse_mode="Markdown")
             text = ""
 
     if text:
-        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
+        await msg.reply_text(
+            text, 
+            parse_mode="Markdown", 
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
 
 async def select_location_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_loc = context.user_data.get("user_location", "አልተመረጠም")
@@ -912,6 +1112,10 @@ async def prompt_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return WAITING_FOR_SEARCH
 
+# ==============================================================================
+# 14. CUSTOMER REQUEST HANDLER
+# ==============================================================================
+
 async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg:
@@ -924,6 +1128,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
             "📍 አካባቢ ምረጥ",
             "📋 የፋርማሲዎች ዝርዝር",
             "🏥 ፋርማሲ መዝግብ",
+            "🔔 ማሳወቂያዎች",
             "📞 እገዛ / ድጋፍ",
             "🏠 ወደ ዋና ገጽ"
         ]
@@ -931,6 +1136,8 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
         if msg.text in menu_buttons:
             if msg.text == "🔍 መድኃኒት ፈልግ":
                 return await prompt_search(update, context)
+            elif msg.text == "🔔 ማሳወቂያዎች":
+                return await show_notifications(update, context)
             else:
                 await start(update, context)
                 return ConversationHandler.END
@@ -951,6 +1158,8 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
     photo_file_id = msg.photo[-1].file_id if msg.photo else (msg.document.file_id if msg.document else None)
     is_doc = True if msg.document else False
     loc_tag = f" (አካባቢ፦ {user_loc})" if user_loc else ""
+    medicine_name = msg.text if msg.text else "Prescription Photo"
+    order_time = datetime.now()
 
     if photo_file_id:
         await msg.reply_text(
@@ -959,7 +1168,16 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
         )
         for chat_id in target_chats:
             try:
-                caption = f"🔔 አዲስ የመድኃኒት ፍለጋ ጥያቄ (በፎቶ)!\nከደንበኛ፡ {user.first_name}\n📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n\nመድኃኒቱ አለዎት?"
+                caption = f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ (በፎቶ)!**\n"
+                caption += f"👤 ከደንበኛ፡ {user.first_name}\n"
+                caption += f"📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n"
+                caption += f"📅 ቀን: {order_time.strftime('%Y-%m-%d')}\n"
+                caption += f"🕐 ሰዓት: {order_time.strftime('%H:%M')}\n\n"
+                caption += f"⚡ **እባክዎ በፍጥነት ምላሽ ይስጡ!**"
+                
+                # Send notification to pharmacy
+                await send_order_notification(context, chat_id, user.id, "Prescription Photo", order_time)
+                
                 if is_doc:
                     await context.bot.send_document(chat_id=chat_id, document=photo_file_id, caption=caption, reply_markup=reply_markup)
                 else:
@@ -974,15 +1192,28 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
         )
         for chat_id in target_chats:
             try:
+                # Send notification to pharmacy
+                await send_order_notification(context, chat_id, user.id, med_name, order_time)
+                
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=f"🔔 አዲስ የመድኃኒት ፍለጋ ጥያቄ!\nየተፈለገው መድኃኒት፡ {med_name}\n📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n\nመድኃኒቱ አለዎት?",
+                    text=f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ!**\n"
+                         f"💊 የተፈለገው መድኃኒት፡ **{med_name}**\n"
+                         f"👤 ከደንበኛ፡ {user.first_name}\n"
+                         f"📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n"
+                         f"📅 ቀን: {order_time.strftime('%Y-%m-%d')}\n"
+                         f"🕐 ሰዓት: {order_time.strftime('%H:%M')}\n\n"
+                         f"⚡ **እባክዎ በፍጥነት ምላሽ ይስጡ!**",
                     reply_markup=reply_markup
                 )
             except Exception as e:
                 logging.error(f"Pharmacy notify error: {e}")
 
     return ConversationHandler.END
+
+# ==============================================================================
+# 15. PHARMACY RESPONSE HANDLERS
+# ==============================================================================
 
 async def handle_pharmacy_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1040,6 +1271,7 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
 
     if customer_id:
         try:
+            # Send response to customer
             await context.bot.send_message(
                 chat_id=int(customer_id),
                 text=f"🎉 የመድኃኒት መረጃ ከ{pharm_name} ተገኘ!\n\n"
@@ -1054,6 +1286,10 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
             logging.error(f"ለደንበኛው {customer_id} መላክ አልተቻለም፦ {e}")
 
     return ConversationHandler.END
+
+# ==============================================================================
+# 16. ADMIN AND PHARMACY REGISTRATION
+# ==============================================================================
 
 async def handle_admin_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1073,7 +1309,11 @@ async def handle_admin_approval(update: Update, context: ContextTypes.DEFAULT_TY
 
         if pharm_chat_id:
             try:
-                await context.bot.send_message(chat_id=pharm_chat_id, text=f"🎉 እንኳን ደስ አለዎት!\n\nየፋርማሲዎት ({pharm_name}) ምዝገባ በአድሚኑ ተረጋግጧል።")
+                # Send approval notification to pharmacy
+                await context.bot.send_message(
+                    chat_id=pharm_chat_id, 
+                    text=f"🎉 እንኳን ደስ አለዎት!\n\nየፋርማሲዎት ({pharm_name}) ምዝገባ በአድሚኑ ተረጋግጧል።"
+                )
             except Exception as e:
                 logging.error(f"ለፋርማሲው ማሳወቂያ መላክ አልተቻለም፦ {e}")
 
@@ -1166,7 +1406,7 @@ async def error_handler_func(update: object, context: ContextTypes.DEFAULT_TYPE)
     logging.error(msg="Exception while handling an update:", exc_info=context.error)
 
 # ==============================================================================
-# 11. MAIN FUNCTION
+# 17. MAIN FUNCTION
 # ==============================================================================
 
 def main():
@@ -1217,6 +1457,7 @@ def main():
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(MessageHandler(filters.Regex("^📞 እገዛ / ድጋፍ$"), show_help))
     app.add_handler(MessageHandler(filters.Regex("^📋 የፋርማሲዎች ዝርዝር$"), list_pharmacies))
+    app.add_handler(MessageHandler(filters.Regex("^🔔 ማሳወቂያዎች$"), show_notifications))
     app.add_handler(CallbackQueryHandler(handle_admin_approval, pattern="^verify_"))
     app.add_handler(CallbackQueryHandler(translate_callback, pattern="^(translate_amharic|go_home)$"))
     app.add_handler(CallbackQueryHandler(show_english_callback, pattern="^show_english$"))
