@@ -379,40 +379,46 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not OPENROUTER_API_KEY:
         await msg.reply_text(
-            "⚠️ የ AI አገልግሎቱ ለጊዜው አልተዋቀረም።",
+            "⚠️ AI service is not configured.",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         return ConversationHandler.END
 
-    await msg.reply_text("⏳ መረጃውን እያዘጋጀሁ ነው... እባክዎ ትንሽ ይጠብቁ...")
+    wait_msg = await msg.reply_text("⏳ Fetching medical information... Please wait...")
 
-    prompt = f"""
-ስለ {msg.text} መድሃኒት የሚከተለውን መረጃ በአማርኛ አብራራ፦
+    # ✅ Prompt in English for better accuracy
+    prompt = f"""Provide detailed medical information about the following medication:
 
-1. የመድኃኒቱ ስም (ተመሳሳይ ስሞች ካሉ)
-2. ዋነኛ ጥቅም (ለምን ይውላል)
-3. አወሳሰድ (እንዴት እንደሚወሰድ)
-4. ሊከሰቱ የሚችሉ የጎንዮሽ ጉዳቶች
-5. ጥንቃቄዎች እና ማስጠንቀቂያዎች
+1. Name (generic and brand names if applicable)
+2. Primary uses and indications
+3. Dosage and administration
+4. Common side effects
+5. Precautions and contraindications
 
-ማስታወሻ፦ መረጃው ለግንዛቤ ብቻ ነው። ሁልጊዜ የሐኪምዎን መመሪያ ይከተሉ።
-"""
+Medication: {msg.text}"""
 
     try:
-        response_text = await analyze_with_openrouter(prompt, text=msg.text)
+        # ✅ Get English response from AI
+        english_response = await analyze_with_openrouter_english(prompt, text=msg.text)
         
-        # Store English response for translation
-        context.user_data["last_english_response"] = response_text
-        
-        # ✅ Translate to Amharic inline keyboard
+        if english_response.startswith("❌") or english_response.startswith("⚠️"):
+            await wait_msg.edit_text(english_response)
+            return ConversationHandler.END
+
+        # ✅ Store English response for translation
+        context.user_data["last_english_response"] = english_response
+
+        # ✅ Inline keyboard for translation
         inline_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📝 ወደ አማርኛ ተርጉም", callback_data="translate_amharic")]
+            [InlineKeyboardButton("📝 Translate to Amharic", callback_data="translate_amharic")],
+            [InlineKeyboardButton("🏠 ወደ ዋና ገጽ", callback_data="go_home")]
         ])
-        
+
+        await wait_msg.delete()
         await msg.reply_text(
-            f"💡 **የመድኃኒት መረጃ**\n\n{response_text}\n\n"
+            f"💡 **Medical Information (English)**\n\n{english_response}\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⚠️ *ይህ መረጃ ለግንዛቤ ብቻ ነው። ሁልጊዜ የሐኪምዎን መመሪያ ይከተሉ።*",
+            f"⚠️ *This is for informational purposes only. Always consult your doctor.*",
             parse_mode="Markdown",
             reply_markup=inline_keyboard
         )
@@ -420,14 +426,13 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         error_msg = str(e)
         logging.error(f"Error: {error_msg}")
-        await msg.reply_text(
-            f"❌ መረጃውን ማግኘት አልተቻለም።\n\n`{error_msg[:200]}`",
+        await wait_msg.edit_text(
+            f"❌ Failed to get information.\n\n`{error_msg[:200]}`",
             parse_mode="Markdown",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
 
     return ConversationHandler.END
-
 # ==============================================================================
 # የቀሩት ሁሉም HANDLERS
 # ==============================================================================
