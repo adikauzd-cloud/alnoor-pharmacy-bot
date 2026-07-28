@@ -241,7 +241,6 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
         return "⚠️ የOpenRouter AI አገልግሎት ቁልፍ አልተገኘም።"
     
     try:
-        # የጥያቄ ይዘት ማዘጋጀት
         if text:
             user_content = f"{prompt}\n\nየመድኃኒቱ ስም፦ {text}"
         elif image_bytes:
@@ -253,7 +252,6 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
         else:
             return "❌ ምንም መረጃ አልተላከም።"
         
-        # ✅ ትክክለኛው የOpenRouter ጥሪ - POST ዘዴ
         response = requests.post(
             url="https://openrouter.ai/api/v1/chat/completions",
             headers={
@@ -271,7 +269,7 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
                 "temperature": 0.7,
                 "max_tokens": 1024
             },
-            timeout=60
+            timeout=120
         )
         
         if response.status_code != 200:
@@ -279,7 +277,7 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
             logging.error(f"OpenRouter API Error {response.status_code}: {error_detail}")
             
             if "API key" in error_detail:
-                return "⚠️ የOpenRouter API ቁልፍ ትክክል አይደለም። እባክዎ ያረጋግጡ።"
+                return "⚠️ የOpenRouter API ቁልፍ ትክክል አይደለም።"
             elif "quota" in error_detail.lower():
                 return "⚠️ የነጻ ጥቅም ገደብ አልፏል። እባክዎ በኋላ ይሞክሩ።"
             elif "model" in error_detail.lower():
