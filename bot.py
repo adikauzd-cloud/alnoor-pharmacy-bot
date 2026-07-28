@@ -420,8 +420,8 @@ REG_LICENSE = 13
 MAIN_KEYBOARD = [
     ["🔍 መድኃኒት ፈልግ", "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ"],
     ["📍 አካባቢ ምረጥ", "📋 የፋርማሲዎች ዝርዝር"],
-    ["🏥 ፋርማሲ መዝግብ", "📊 ስታቲስቲክስ / Stats"],
-    ["📞 እገዛ / ድጋፍ", "🏠 ወደ ዋና ገጽ"]
+    ["🏥 ፋርማሲ መዝግብ", "📞 እገዛ / ድጋፍ"],
+    ["🏠 ወደ ዋና ገጽ"]
 ]
 
 LOCATION_KEYBOARD = [
@@ -479,6 +479,8 @@ def clean_translation(text):
 # ==============================================================================
 # 9. AI HANDLER
 # ==============================================================================
+
+import time
 
 async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
     if not OPENROUTER_API_KEY:
@@ -587,6 +589,89 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     return ConversationHandler.END
 
+# ----------------- /stats COMMAND (ለሁሉም ተጠቃሚዎች) -----------------
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """📊 የስርዓት ስታቲስቲክስ - ለሁሉም ተጠቃሚዎች"""
+    
+    user_id = update.effective_user.id
+    
+    # Check if user is admin
+    is_admin = (user_id == ADMIN_CHAT_ID)
+    
+    ai_stats = get_ai_stats()
+    total_pharms = get_bot_statistics()
+    top_meds = get_top_medicines(5)
+    top_pharms = get_top_pharmacies(5)
+    search_history = get_user_search_history(user_id, 5)
+    
+    text = f"📊 **የስርዓት ስታቲስቲክስ**\n\n"
+    text += f"🤖 **AI አጠቃቀም**\n"
+    text += f"• ጠቅላላ ጥያቄዎች: {ai_stats['total']}\n"
+    text += f"• ስኬታማ: {ai_stats['successful']}\n"
+    
+    # Show errors only for admin
+    if is_admin:
+        text += f"• ስህተቶች: {ai_stats['errors']}\n"
+    
+    text += f"• አማካይ ምላሽ ጊዜ: {ai_stats['avg_time']} ሰከንድ\n\n"
+    
+    text += f"🏥 **ፋርማሲዎች**\n"
+    text += f"• ጠቅላላ: {total_pharms[0]}\n"
+    text += f"• የተረጋገጡ: {total_pharms[1]}\n"
+    
+    # Show pending only for admin
+    if is_admin:
+        text += f"• ማረጋገጫ የሚጠብቁ: {total_pharms[2]}\n"
+    text += "\n"
+    
+    if top_meds:
+        text += f"🏆 **ከፍተኛ መድኃኒቶች**\n"
+        for idx, (med, count) in enumerate(top_meds, 1):
+            text += f"• {idx}. {med} ({count} ጊዜ)\n"
+        text += "\n"
+    
+    if top_pharms:
+        text += f"🏆 **ከፍተኛ ፋርማሲዎች**\n"
+        for idx, (pid, name, loc, phone, count) in enumerate(top_pharms, 1):
+            text += f"• {idx}. {name} ({count} ምላሾች)\n"
+        text += "\n"
+    
+    if search_history:
+        text += f"📝 **የቅርብ ጊዜ ፍለጋዎች**\n"
+        for med, date in search_history:
+            date_str = date.strftime('%Y-%m-%d %H:%M') if isinstance(date, datetime) else str(date)
+            text += f"• {med} - {date_str}\n"
+    
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
+
+# ----------------- ADMIN STATS (ለአድሚን ብቻ) -----------------
+
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ ይቅርታ! ይህንን ትዕዛዝ መጠቀም የሚችለው አድሚኑ ብቻ ነው።")
+        return
+
+    total, verified, pending = get_bot_statistics()
+    ai_stats = get_ai_stats()
+    
+    stats_text = (
+        f"📊 **የአድሚን ስታቲስቲክስ**\n\n"
+        f"🤖 **AI አጠቃቀም**\n"
+        f"• ጠቅላላ ጥያቄዎች: {ai_stats['total']}\n"
+        f"• ስኬታማ: {ai_stats['successful']}\n"
+        f"• ስህተቶች: {ai_stats['errors']}\n"
+        f"• አማካይ ምላሽ ጊዜ: {ai_stats['avg_time']} ሰከንድ\n\n"
+        f"🏥 **ፋርማሲዎች**\n"
+        f"• ጠቅላላ የተመዘገቡ: {total}\n"
+        f"• የተረጋገጡ (ሕጋዊ): {verified}\n"
+        f"• ማረጋገጫ የሚጠብቁ (Pending): {pending}\n\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"🤖 *አል-ኑር መድኃኒት አፋላጊ ሲስተም*"
+    )
+    await update.message.reply_text(stats_text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
+
 async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📖 ስለ ታዘዘልዎት መድኃኒት መረጃ ማወቂያ\n\n"
@@ -599,6 +684,8 @@ async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return WAITING_FOR_MED_INFO
 
 async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle translation using Lesan AI with natural Amharic"""
+    
     query = update.callback_query
     await query.answer()
     
@@ -618,44 +705,51 @@ async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         amharic_text = await translate_to_amharic(english_text)
         if amharic_text:
             amharic_text = clean_translation(amharic_text)
+            
             inline_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📝 Show English", callback_data="show_english")],
                 [InlineKeyboardButton("🏠 ወደ ዋና ገጽ", callback_data="go_home")]
             ])
+            
             await query.edit_message_text(
-                f"💡 **የመድኃኒት መረጃ (አማርኛ)**\n\n{amharic_text}\n\n"
+                f"💡 የመድኃኒት መረጃ (አማርኛ)\n\n{amharic_text}\n\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"⚠️ *ይህ መረጃ ለግንዛቤ ብቻ ነው። ሁልጊዜ የሐኪምዎን መመሪያ ይከተሉ።*",
-                parse_mode="Markdown",
+                f"⚠️ ይህ መረጃ ለግንዛቤ ብቻ ነው። ሁልጊዜ የሐኪምዎን መመሪያ ይከተሉ።",
                 reply_markup=inline_keyboard
             )
             context.user_data["last_amharic_response"] = amharic_text
         else:
-            await query.edit_message_text("❌ ትርጉሙ አልተሳካም። እባክዎ እንደገና ይሞክሩ።")
+            await query.edit_message_text(
+                "❌ ትርጉሙ አልተሳካም። እባክዎ እንደገና ይሞክሩ።\n\n"
+                "💡 ወይም የእንግሊዝኛውን ቅጂ ይጠቀሙ።"
+            )
+            
     except Exception as e:
         logging.error(f"Translation error: {e}")
         await query.edit_message_text(f"❌ የትርጉም ስህተት: {str(e)[:200]}")
 
 async def show_english_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show the original English response again"""
+    
     query = update.callback_query
     await query.answer()
+    
     english_text = context.user_data.get("last_english_response")
     if not english_text:
         await query.edit_message_text("⚠️ No English text found.")
         return
+
     inline_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📝 Translate to Amharic", callback_data="translate_amharic")],
         [InlineKeyboardButton("🏠 ወደ ዋና ገጽ", callback_data="go_home")]
     ])
+
     await query.edit_message_text(
-        f"💡 **Medical Information (English)**\n\n{english_text}\n\n"
+        f"💡 Medical Information (English)\n\n{english_text}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚠️ *This is for informational purposes only. Always consult your doctor.*",
-        parse_mode="Markdown",
+        f"⚠️ This is for informational purposes only. Always consult your doctor.",
         reply_markup=inline_keyboard
     )
-
-import time
 
 async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
@@ -722,7 +816,6 @@ Medication: {text}"""
             await wait_msg.edit_text(english_response)
             return ConversationHandler.END
 
-        # Save search history
         if text:
             save_search_history(user_id, text, english_response[:200])
         else:
@@ -737,10 +830,9 @@ Medication: {text}"""
 
         await wait_msg.delete()
         await msg.reply_text(
-            f"💡 **Medical Information (English)**\n\n{english_response}\n\n"
+            f"💡 Medical Information (English)\n\n{english_response}\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⚠️ *This is for informational purposes only. Always consult your doctor.*",
-            parse_mode="Markdown",
+            f"⚠️ This is for informational purposes only. Always consult your doctor.",
             reply_markup=inline_keyboard
         )
         
@@ -755,63 +847,6 @@ Medication: {text}"""
 
     return ConversationHandler.END
 
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_CHAT_ID:
-        await update.message.reply_text("⛔ ይቅርታ! ይህንን ትዕዛዝ መጠቀም የሚችለው አድሚኑ ብቻ ነው።")
-        return
-
-    total, verified, pending = get_bot_statistics()
-    stats_text = (
-        f"📊 የቦቱ ስታቲስቲክስ እና መረጃ (PostgreSQL)\n\n"
-        f"🏥 ጠቅላላ የተመዘገቡ ፋርማሲዎች፦ {total}\n"
-        f"✅ የተረጋገጡ (ሕጋዊ) ፋርማሲዎች፦ {verified}\n"
-        f"⏳ ማረጋገጫ የሚጠብቁ (Pending)፦ {pending}\n\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"🤖 *አል-ኑር መድኃኒት አፋላጊ ሲስተም*"
-    )
-    await update.message.reply_text(stats_text, parse_mode="Markdown")
-
-async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """📊 የስርዓት ስታቲስቲክስ ማሳየት"""
-    
-    ai_stats = get_ai_stats()
-    total_pharms = get_bot_statistics()
-    top_meds = get_top_medicines(5)
-    top_pharms = get_top_pharmacies(5)
-    search_history = get_user_search_history(update.effective_user.id, 5)
-    
-    text = f"📊 **የስርዓት ስታቲስቲክስ**\n\n"
-    text += f"🤖 **AI አጠቃቀም**\n"
-    text += f"• ጠቅላላ ጥያቄዎች: {ai_stats['total']}\n"
-    text += f"• ስኬታማ: {ai_stats['successful']}\n"
-    text += f"• ስህተቶች: {ai_stats['errors']}\n"
-    text += f"• አማካይ ምላሽ ጊዜ: {ai_stats['avg_time']} ሰከንድ\n\n"
-    
-    text += f"🏥 **ፋርማሲዎች**\n"
-    text += f"• ጠቅላላ: {total_pharms[0]}\n"
-    text += f"• የተረጋገጡ: {total_pharms[1]}\n"
-    text += f"• ማረጋገጫ የሚጠብቁ: {total_pharms[2]}\n\n"
-    
-    if top_meds:
-        text += f"🏆 **ከፍተኛ መድኃኒቶች**\n"
-        for idx, (med, count) in enumerate(top_meds, 1):
-            text += f"• {idx}. {med} ({count} ጊዜ)\n"
-        text += "\n"
-    
-    if top_pharms:
-        text += f"🏆 **ከፍተኛ ፋርማሲዎች**\n"
-        for idx, (pid, name, loc, phone, count) in enumerate(top_pharms, 1):
-            text += f"• {idx}. {name} ({count} ምላሾች)\n"
-        text += "\n"
-    
-    if search_history:
-        text += f"📝 **የቅርብ ጊዜ ፍለጋዎች**\n"
-        for med, date in search_history:
-            text += f"• {med} - {date.strftime('%Y-%m-%d %H:%M') if isinstance(date, datetime) else date}\n"
-    
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
-
 async def list_pharmacies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """📋 የፋርማሲዎች ዝርዝር ከደረጃ ጋር"""
     pharmacies = get_all_verified_pharmacies()
@@ -822,7 +857,6 @@ async def list_pharmacies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Get top pharmacies for ranking
     top_pharms = get_top_pharmacies(100)
     pharm_rank = {pid: idx+1 for idx, (pid, _, _, _, _) in enumerate(top_pharms)}
     
@@ -837,12 +871,12 @@ async def list_pharmacies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"   🕒 የስራ ሰዓት፦ {hours}\n"
         text += "────────────────────\n"
         
-        # Split long messages
         if len(text) > 3500:
             await update.message.reply_text(text, parse_mode="Markdown")
             text = ""
 
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
+    if text:
+        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
 
 async def select_location_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_loc = context.user_data.get("user_location", "አልተመረጠም")
@@ -891,15 +925,12 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
             "📋 የፋርማሲዎች ዝርዝር",
             "🏥 ፋርማሲ መዝግብ",
             "📞 እገዛ / ድጋፍ",
-            "🏠 ወደ ዋና ገጽ",
-            "📊 ስታቲስቲክስ / Stats"
+            "🏠 ወደ ዋና ገጽ"
         ]
         
         if msg.text in menu_buttons:
             if msg.text == "🔍 መድኃኒት ፈልግ":
                 return await prompt_search(update, context)
-            elif msg.text == "📊 ስታቲስቲክስ / Stats":
-                return await show_stats(update, context)
             else:
                 await start(update, context)
                 return ConversationHandler.END
@@ -992,7 +1023,6 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
     pharm_phone = pharm_info[2] if pharm_info else "ያልተጠቀሰ"
     pharm_hours = pharm_info[3] if pharm_info and pharm_info[3] else "ያልተጠቀሰ"
 
-    # Save pharmacy response
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -1184,9 +1214,9 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", admin_stats))
+    app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(MessageHandler(filters.Regex("^📞 እገዛ / ድጋፍ$"), show_help))
     app.add_handler(MessageHandler(filters.Regex("^📋 የፋርማሲዎች ዝርዝር$"), list_pharmacies))
-    app.add_handler(MessageHandler(filters.Regex("^📊 ስታቲስቲክስ / Stats$"), show_stats))
     app.add_handler(CallbackQueryHandler(handle_admin_approval, pattern="^verify_"))
     app.add_handler(CallbackQueryHandler(translate_callback, pattern="^(translate_amharic|go_home)$"))
     app.add_handler(CallbackQueryHandler(show_english_callback, pattern="^show_english$"))
