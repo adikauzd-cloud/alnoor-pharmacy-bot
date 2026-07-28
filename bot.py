@@ -49,13 +49,6 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.0-flash-001")
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# ==============================================================================
-# 🤖 Translation AI Configuration (ለትርጉም)
-# ==============================================================================
-TRANSLATE_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")  # ተመሳሳይ ቁልፍ መጠቀም እንችላለን
-TRANSLATE_MODEL = os.environ.get("TRANSLATE_MODEL", "openai/gpt-4o-mini")  # ርካሽ ሞዴል
-TRANSLATE_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -238,55 +231,55 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==============================================================================
-# 🤖 Translation AI Handler
+# 🤖 Translation AI Handler (Lesan AI)
 # ==============================================================================
 
 async def translate_to_amharic(english_text):
-    """Translate English text to Amharic using dedicated translation model"""
+    """Translate using Lesan AI with fallback to Google Translate"""
     
-    if not TRANSLATE_API_KEY:
-        return None
-    
+    # ✅ Primary: Lesan AI (ለአማርኛ የተሻሻለ)
     try:
-        translation_prompt = f"""Translate the following medical information to Amharic (Ethiopian language).
-Use natural, conversational Amharic.
-Keep medical terms accurate.
-Make it easy for patients to understand.
-
-Medical Information:
-{english_text}
-
-Amharic Translation:"""
-
         response = requests.post(
-            url=TRANSLATE_API_URL,
-            headers={
-                "Authorization": f"Bearer {TRANSLATE_API_KEY}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://alnoor-pharmacy-bot.onrender.com",
-                "X-Title": "Al-Noor Pharmacy Bot"
-            },
+            url="https://api.lesan.ai/translate",
             json={
-                "model": TRANSLATE_MODEL,
-                "messages": [
-                    {"role": "system", "content": "You are a professional medical translator. Translate accurately and naturally to Amharic."},
-                    {"role": "user", "content": translation_prompt}
-                ],
-                "temperature": 0.3,
-                "max_tokens": 1024
+                "text": english_text,
+                "source": "en",
+                "target": "am"
             },
-            timeout=60
+            timeout=30
         )
         
         if response.status_code == 200:
-            return response.json()['choices'][0]['message']['content']
-        else:
-            logging.error(f"Translation API Error: {response.status_code}")
-            return None
-            
+            result = response.json()
+            translation = result.get('translation') or result.get('result')
+            if translation:
+                logging.info("Translation successful using Lesan AI")
+                return translation
     except Exception as e:
-        logging.error(f"Translation error: {e}")
-        return None
+        logging.error(f"Lesan AI error: {e}")
+    
+    # ✅ Fallback: Google Translate
+    try:
+        logging.info("Falling back to Google Translate...")
+        url = "https://translate.googleapis.com/translate_a/single"
+        params = {
+            "client": "gtx",
+            "sl": "en",
+            "tl": "am",
+            "dt": "t",
+            "q": english_text
+        }
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            result = response.json()
+            translation = ''.join([part[0] for part in result[0] if part[0]])
+            if translation:
+                logging.info("Translation successful using Google Translate")
+                return translation
+    except Exception as e:
+        logging.error(f"Google Translate fallback error: {e}")
+    
+    return None
 
 # ==============================================================================
 # 🤖 Medicine Info AI Handler
@@ -373,7 +366,7 @@ async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return WAITING_FOR_MED_INFO
 
 async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle translation button click - English to Amharic"""
+    """Handle translation using Lesan AI with fallback"""
     
     query = update.callback_query
     await query.answer()
@@ -385,19 +378,15 @@ async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     english_text = context.user_data.get("last_english_response")
     if not english_text:
-        await query.edit_message_text(
-            "⚠️ No English text to translate. Please search for a medication first."
-        )
+        await query.edit_message_text("⚠️ No English text to translate.")
         return
 
-    await query.edit_message_text("⏳ Translating to Amharic... Please wait...")
+    await query.edit_message_text("⏳ Translating to Amharic using Lesan AI... Please wait...")
 
     try:
-        # ✅ Use dedicated translation model
         amharic_text = await translate_to_amharic(english_text)
         
         if amharic_text:
-            # ✅ Show Amharic translation with option to see English again
             inline_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📝 Show English", callback_data="show_english")],
                 [InlineKeyboardButton("🏠 ወደ ዋና ገጽ", callback_data="go_home")]
@@ -413,9 +402,13 @@ async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             
             context.user_data["last_amharic_response"] = amharic_text
         else:
-            await query.edit_message_text("❌ Translation failed. Please try again later.")
+            await query.edit_message_text(
+                "❌ Translation failed. Please try again later.\n\n"
+                "💡 ወይም የእንግሊዝኛውን ቅጂ ይጠቀሙ።"
+            )
             
     except Exception as e:
+        logging.error(f"Translation error: {e}")
         await query.edit_message_text(f"❌ Translation error: {str(e)[:200]}")
 
 async def show_english_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
