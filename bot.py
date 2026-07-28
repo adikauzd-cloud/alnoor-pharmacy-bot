@@ -477,6 +477,46 @@ Medication: {msg.text}"""
             parse_mode="Markdown",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
+async def translate_to_amharic(english_text):
+    """ወደ አማርኛ ለመተርጎም የተሻሻለ ፕሮምፕት"""
+    
+    translation_prompt = f"""You are a medical translator with expertise in Amharic.
+Translate the following medical information from English to Amharic.
+
+IMPORTANT RULES:
+1. Use natural, conversational Amharic
+2. Keep medical terms in English with Amharic explanation
+3. Use simple words that patients can understand
+4. Maintain the structure (bullet points, numbers)
+
+Original Medical Information:
+{english_text}
+
+Amharic Translation:"""
+
+    response = requests.post(
+        url=OPENROUTER_API_URL,
+        headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://alnoor-pharmacy-bot.onrender.com",
+            "X-Title": "Al-Noor Pharmacy Bot"
+        },
+        json={
+            "model": OPENROUTER_MODEL,
+            "messages": [
+                {"role": "system", "content": "You are a professional medical translator. Translate accurately and naturally."},
+                {"role": "user", "content": translation_prompt}
+            ],
+            "temperature": 0.3,
+            "max_tokens": 1024
+        },
+        timeout=60
+    )
+    
+    if response.status_code == 200:
+        return response.json()['choices'][0]['message']['content']
+    return None
 
     return ConversationHandler.END
 
