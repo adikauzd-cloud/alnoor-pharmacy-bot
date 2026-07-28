@@ -47,7 +47,7 @@ LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4Fmr
 # ==============================================================================
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o-mini")
-OPENROUTER_API_URL = "https://openrouter.ai/chat"
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -238,7 +238,7 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
     """OpenRouter API በመጠቀም መድሃኒት ተንትን"""
     
     if not OPENROUTER_API_KEY:
-        return "⚠️ የOpenRouter AI አገልግሎት ቁልፍ አልተገኘም።"
+        return "⚠️ የOpenRouter AI አገልግሎት ቁልፍ አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
     
     try:
         if text:
@@ -252,36 +252,33 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
         else:
             return "❌ ምንም መረጃ አልተላከም።"
         
-        response = requests.post(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://alnoor-pharmacy-bot.onrender.com",
-                "X-Title": "Al-Noor Pharmacy Bot"
-            },
-            json={
-                "model": OPENROUTER_MODEL,
-                "messages": [
-                    {"role": "system", "content": "አንተ የመድሃኒት ባለሙያ ነህ። መረጃህን በአማርኛ ስጥ።"},
-                    {"role": "user", "content": user_content}
-                ],
-                "temperature": 0.7,
-                "max_tokens": 1024
-            },
-            timeout=120
-        )
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://alnoor-pharmacy-bot.onrender.com",
+            "X-Title": "Al-Noor Pharmacy Bot"
+        }
+        
+        payload = {
+            "model": OPENROUTER_MODEL,
+            "messages": [
+                {"role": "system", "content": "አንተ የመድሃኒት ባለሙያ ነህ። መረጃህን በአማርኛ ስጥ።"},
+                {"role": "user", "content": user_content}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 1024
+        }
+        
+        response = requests.post(OPENROUTER_API_URL, json=payload, headers=headers, timeout=60)
         
         if response.status_code != 200:
             error_detail = response.text
             logging.error(f"OpenRouter API Error {response.status_code}: {error_detail}")
             
             if "API key" in error_detail:
-                return "⚠️ የOpenRouter API ቁልፍ ትክክል አይደለም።"
+                return "⚠️ የOpenRouter API ቁልፍ ትክክል አይደለም። እባክዎ ያረጋግጡ።"
             elif "quota" in error_detail.lower():
                 return "⚠️ የነጻ ጥቅም ገደብ አልፏል። እባክዎ በኋላ ይሞክሩ።"
-            elif "model" in error_detail.lower():
-                return f"⚠️ ሞዴሉ '{OPENROUTER_MODEL}' አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
             else:
                 return f"❌ የOpenRouter API ስህተት፦ {response.status_code}"
         
@@ -315,96 +312,98 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if msg.text == "🏠 ወደ ዋና ገጽ":
         return await start(update, context)
 
-    # መጀመሪያ ከዳታቤዝ ፈልግ
-    if msg.text:
-        local_info = get_medicine_info(msg.text)
-        if local_info:
-            await msg.reply_text(
-                local_info,
-                parse_mode="Markdown",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-            return ConversationHandler.END
-
-    # ካልተገኘ AI ተጠቀም (ግን የተሻሻለ ፕሮምፕት ተጠቀም)
     if not OPENROUTER_API_KEY:
         await msg.reply_text(
-            "⚠️ የ AI አገልግሎቱ ለጊዜው አልተዋቀረም።",
+            "⚠️ የ AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         return ConversationHandler.END
 
-    await msg.reply_text("⏳ መረጃውን እያዘጋጀሁ ነው... ትንሽ ይጠብቁ...")
+    if msg.text and msg.text not in ["📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ"]:
+        await msg.reply_text("⏳ መረጃውን እያዘጋጀሁ ነው... ትንሽ ይጠብቁ...")
+        
+        prompt = f"ስለ {msg.text} መድኃኒት መረጃ ስጥ፦ ስም፣ ጥቅም፣ አወሳሰድ፣ ጎንዮሽ ጉዳቶች"
+        
+        try:
+            response_text = await analyze_with_openrouter(prompt, text=msg.text)
+            await msg.reply_text(
+                f"💡 የመድኃኒት መረጃ፦\n\n{response_text}\n\n"
+                f"⚠️ *ማስታወሻ፦ ይህ መረጃ ለግንዛቤ ብቻ ነው።*",
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+        except Exception as e:
+            await msg.reply_text(
+                f"❌ መረጃውን ማግኘት አልተቻለም።\n\n`{str(e)[:200]}`",
+                parse_mode="Markdown"
+            )
+        return ConversationHandler.END
 
-    # የተሻሻለ ፕሮምፕት
+    await msg.reply_text("⏳ መረጃው በ AI በመተንተን ላይ ነው... እባክዎ ትንሽ ይጠብቁ...")
+
     prompt = (
-        "እባክህ ስለ መድሃኒት ትክክለኛ እና አስተማማኝ መረጃ ስጥ።\n\n"
-        "የሚከተለውን መድሃኒት በዚህ ቅርጸት አብራራ፦\n\n"
-        "1. ትክክለኛ የመድሃኒቱ ስም\n"
-        "2. ዋነኛ ጥቅም (ለምን ይውላል)\n"
-        "3. አወሳሰድ (እንዴት እንደሚወሰድ)\n"
-        "4. ሊከሰቱ የሚችሉ የጎንዮሽ ጉዳቶች\n"
-        "5. ጥንቃቄዎች እና ማስጠንቀቂያዎች\n\n"
-        "ማስታወሻ፦ መረጃው ከታወቁ የጤና ምንጮች የተወሰደ እና ለግንዛቤ ብቻ መሆኑን ግለጽ።\n\n"
-        f"መድሃኒቱ፦ {msg.text}"
+        "እባክህ የዚህን መድኃኒት ወይም የሐኪም ማዘዣ ፎቶ መዝገብ ተንትነህ በሚከተለው መልኩ በአማርኛ አብራራ፦\n"
+        "1. የመድኃኒቱ ስም (Medication Name)\n"
+        "2. ዋነኛ ጥቅም (Primary Usage)\n"
+        "3. አወሳሰድ እና ጥንቃቄዎች (Dosage & Precautions)\n"
+        "4. ሊከሰቱ የሚችሉ የጎንዮሽ ጉዳቶች (Side Effects)\n\n"
+        "ማስታወሻ፦ መረጃው ለግንዛቤ ብቻ እንደሆነ እና የሐኪም ምክርን እንደማይተካ በጥሩ ስነ-ምግባር ግለጽ።"
     )
 
     try:
-        response_text = await analyze_with_openrouter(prompt, text=msg.text)
+        image_bytes = None
+        text = None
         
+        if msg.photo:
+            photo_file = await msg.photo[-1].get_file()
+            image_bytes = await photo_file.download_as_bytearray()
+            response_text = await analyze_with_openrouter(prompt, text=None, image_bytes=image_bytes)
+            
+        elif msg.text:
+            text = msg.text
+            response_text = await analyze_with_openrouter(prompt, text=text, image_bytes=None)
+        else:
+            await msg.reply_text(
+                "❌ የላኩት ግብዓት ስላልገባኝ ድጋሚ ይሞክሩ።",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+            return ConversationHandler.END
+
         await msg.reply_text(
-            f"💡 የመድኃኒት መረጃ፦\n\n{response_text}\n\n"
-            f"⚠️ *ማስታወሻ፦ ይህ መረጃ ለግንዛቤ ብቻ ነው። ሁልጊዜ የሐኪምዎን መመሪያ ይከተሉ።*",
+            f"💡 የመድኃኒት መረጃ ማብራሪያ፦\n\n{response_text}\n\n"
+            f"⚠️ *ማስታወሻ፦ ይህ መረጃ በ AI የተዘጋጀ ለግንዛቤ ብቻ የሚያገለግል ነው። ሁልጊዜ የሐኪምዎን ወይም የፋርማሲስቱን መመሪያ ይከተሉ።*",
             parse_mode="Markdown",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
     except Exception as e:
-        await msg.reply_text(
-            f"❌ መረጃውን ማግኘት አልተቻለም።\n\n`{str(e)[:200]}`",
-            parse_mode="Markdown",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
+        error_msg = str(e)
+        logging.error(f"OpenRouter error: {error_msg}")
+        
+        if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+            await msg.reply_text(
+                "⏱️ የጊዜ ገደብ አልፏል።\n\n"
+                "📝 እባክዎ የመድኃኒቱን ስም በጽሑፍ ይላኩልን።\n"
+                "🤖 AI መረጃውን በፍጥነት ይመልሳል።\n\n"
+                "💡 ወይም ትንሽ ቆይተው እንደገና ይሞክሩ።",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+        elif "quota" in error_msg.lower():
+            await msg.reply_text(
+                "⚠️ የዕለት ነጻ ጥቅል ገደብ አልፏል።\n\n"
+                "📅 እባክዎ ነገ ከጠዋቱ 3:00 ጀምሮ እንደገና ይሞክሩት!\n\n"
+                "🤖 AI መረጃውን በፍጥነት ይመልሳል።\n\n"
+                "💡 ወይም ትንሽ ቆይተው እንደገና ይሞክሩ።",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+        else:
+            await msg.reply_text(
+                f"❌ መረጃውን መተንተን አልተቻለም።\n\n`{str(e)[:200]}`",
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
 
     return ConversationHandler.END
-MEDICINE_PROMPTS = {
-    "amoxicillin": """
-ስለ Amoxicillin መድሃኒት የሚከተለውን መረጃ ስጥ፦
 
-1. ስም: Amoxicillin
-2. ጥቅም: የባክቴሪያ ኢንፌክሽኖች ማከሚያ
-3. አወሳሰድ: በሐኪም በተወሰነ መጠን
-4. ጎንዮሽ ጉዳቶች: ማቅለሽለሽ, ተቅማጥ, አለርጂ
-5. ጥንቃቄዎች: ለፔኒሲሊን አለርጂ ካለ አይጠቀም
-""",
-    "paracetamol": """
-ስለ Paracetamol መድሃኒት የሚከተለውን መረጃ ስጥ፦
-
-1. ስም: Paracetamol (Acetaminophen)
-2. ጥቅም: የሙቀት መቀነሻ, የህመም ማስታገሻ
-3. አወሳሰድ: በቀን ከ4 ጊዜ አይበልጥ
-4. ጎንዮሽ ጉዳቶች: በተለምዶ ደህንነቱ የተጠበቀ
-5. ጥንቃቄዎች: ከመጠን በላይ አይወሰድ
-"""
-}
-
-def clean_response(text):
-    """አላስፈላጊ ቃላትን አስወግድ"""
-    # የተለመዱ ግራ የሚያጋቡ ቃላትን አስወግድ
-    unwanted_phrases = [
-        "እባክህ", "እባክዎ", "በመሰረቱ", "በአጠቃላይ",
-        "ሊሆን ይችላል", "ሊቻል", "በዚህ መሰረት"
-    ]
-    for phrase in unwanted_phrases:
-        text = text.replace(phrase, "")
-    
-    # ተደጋጋሚ ክፍተቶችን አስወግድ
-    while "  " in text:
-        text = text.replace("  ", " ")
-    
-    return text.strip()
-
-    return ConversationHandler.END
-    
 # ==============================================================================
 # የቀሩት ሁሉም HANDLERS
 # ==============================================================================
