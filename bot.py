@@ -352,6 +352,26 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     return ConversationHandler.END
+    MEDICINE_PROMPTS = {
+    "amoxicillin": """
+ስለ Amoxicillin መድሃኒት የሚከተለውን መረጃ ስጥ፦
+
+1. ስም: Amoxicillin
+2. ጥቅም: የባክቴሪያ ኢንፌክሽኖች ማከሚያ
+3. አወሳሰድ: በሐኪም በተወሰነ መጠን
+4. ጎንዮሽ ጉዳቶች: ማቅለሽለሽ, ተቅማጥ, አለርጂ
+5. ጥንቃቄዎች: ለፔኒሲሊን አለርጂ ካለ አይጠቀም
+""",
+    "paracetamol": """
+ስለ Paracetamol መድሃኒት የሚከተለውን መረጃ ስጥ፦
+
+1. ስም: Paracetamol (Acetaminophen)
+2. ጥቅም: የሙቀት መቀነሻ, የህመም ማስታገሻ
+3. አወሳሰድ: በቀን ከ4 ጊዜ አይበልጥ
+4. ጎንዮሽ ጉዳቶች: በተለምዶ ደህንነቱ የተጠበቀ
+5. ጥንቃቄዎች: ከመጠን በላይ አይወሰድ
+"""
+}
 
 def clean_response(text):
     """አላስፈላጊ ቃላትን አስወግድ"""
