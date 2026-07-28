@@ -5,6 +5,8 @@ import psycopg2
 import requests
 import json
 import base64
+import math
+from datetime import datetime, timedelta
 from flask import Flask
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -43,7 +45,7 @@ if not BOT_TOKEN:
 LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
 
 # ==============================================================================
-# 🤖 OpenRouter AI Configuration (ለመድሃኒት መረጃ)
+# 🤖 OpenRouter AI Configuration
 # ==============================================================================
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.0-flash-001")
@@ -53,18 +55,15 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
-def get_db_connection():
-    if DATABASE_URL:
-        db_url = DATABASE_URL.replace("postgres://", "postgresql://", 1) if DATABASE_URL.startswith("postgres://") else DATABASE_URL
-        return psycopg2.connect(db_url)
-    else:
-        import sqlite3
-        return sqlite3.connect("pharmacy_bot.db")
+# ==============================================================================
+# 2. DATABASE INITIALIZATION WITH NEW TABLES
+# ==============================================================================
 
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    # Pharmacies table
     if DATABASE_URL:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS pharmacies (
@@ -75,7 +74,9 @@ def init_db():
                 phone TEXT NOT NULL,
                 operating_hours TEXT DEFAULT 'ያልተጠቀሰ',
                 license_photo TEXT,
-                is_verified INTEGER DEFAULT 0
+                is_verified INTEGER DEFAULT 0,
+                latitude REAL,
+                longitude REAL
             )
         """)
     else:
@@ -88,28 +89,118 @@ def init_db():
                 phone TEXT NOT NULL,
                 operating_hours TEXT DEFAULT 'ያልተጠቀሰ',
                 license_photo TEXT,
-                is_verified INTEGER DEFAULT 0
+                is_verified INTEGER DEFAULT 0,
+                latitude REAL,
+                longitude REAL
             )
         """)
+    
+    # Search history table
+    if DATABASE_URL:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS search_history (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                medicine_name TEXT NOT NULL,
+                search_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                result_summary TEXT
+            )
+        """)
+    else:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS search_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                medicine_name TEXT NOT NULL,
+                search_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                result_summary TEXT
+            )
+        """)
+    
+    # AI logs table
+    if DATABASE_URL:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ai_logs (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                request_type TEXT,
+                request_data TEXT,
+                response_data TEXT,
+                status_code INTEGER,
+                error_message TEXT,
+                response_time REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    else:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ai_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                request_type TEXT,
+                request_data TEXT,
+                response_data TEXT,
+                status_code INTEGER,
+                error_message TEXT,
+                response_time REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    
+    # Pharmacy responses table
+    if DATABASE_URL:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pharmacy_responses (
+                id SERIAL PRIMARY KEY,
+                pharmacy_id INTEGER NOT NULL,
+                customer_id BIGINT NOT NULL,
+                medicine_name TEXT NOT NULL,
+                price TEXT,
+                response_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    else:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pharmacy_responses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pharmacy_id INTEGER NOT NULL,
+                customer_id INTEGER NOT NULL,
+                medicine_name TEXT NOT NULL,
+                price TEXT,
+                response_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    
     conn.commit()
     conn.close()
 
-def register_pharmacy_db(chat_id, name, location, phone, operating_hours, license_photo):
+def get_db_connection():
+    if DATABASE_URL:
+        db_url = DATABASE_URL.replace("postgres://", "postgresql://", 1) if DATABASE_URL.startswith("postgres://") else DATABASE_URL
+        return psycopg2.connect(db_url)
+    else:
+        import sqlite3
+        return sqlite3.connect("pharmacy_bot.db")
+
+# ==============================================================================
+# 3. DATABASE HELPER FUNCTIONS
+# ==============================================================================
+
+def register_pharmacy_db(chat_id, name, location, phone, operating_hours, license_photo, lat=None, lon=None):
     conn = get_db_connection()
     cursor = conn.cursor()
     if DATABASE_URL:
         cursor.execute("""
-            INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified)
-            VALUES (%s, %s, %s, %s, %s, %s, 0) RETURNING id
-        """, (chat_id, name, location, phone, operating_hours, license_photo))
+            INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified, latitude, longitude)
+            VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s) RETURNING id
+        """, (chat_id, name, location, phone, operating_hours, license_photo, lat, lon))
         pharmacy_id = cursor.fetchone()[0]
     else:
         cursor.execute("""
-            INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified)
-            VALUES (?, ?, ?, ?, ?, ?, 0)
-        """, (chat_id, name, location, phone, operating_hours, license_photo))
+            INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified, latitude, longitude)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+        """, (chat_id, name, location, phone, operating_hours, license_photo, lat, lon))
         pharmacy_id = cursor.lastrowid
-
     conn.commit()
     conn.close()
     return pharmacy_id
@@ -131,6 +222,15 @@ def get_pharmacy_info_by_id(pharmacy_id):
     conn.close()
     return row
 
+def get_pharmacy_info_by_chat_id(chat_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    placeholder = "%s" if DATABASE_URL else "?"
+    cursor.execute(f"SELECT name, location, phone, operating_hours FROM pharmacies WHERE chat_id = {placeholder} ORDER BY id DESC LIMIT 1", (chat_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
 def get_verified_pharmacies_by_location(location=None):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -146,7 +246,7 @@ def get_verified_pharmacies_by_location(location=None):
 def get_all_verified_pharmacies():
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT name, location, phone, operating_hours FROM pharmacies WHERE is_verified = 1")
+    cursor.execute("SELECT id, name, location, phone, operating_hours, latitude, longitude FROM pharmacies WHERE is_verified = 1")
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -155,16 +255,156 @@ def get_bot_statistics():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM pharmacies")
-    total_pharmacies = cursor.fetchone()[0]
+    total = cursor.fetchone()[0]
     cursor.execute("SELECT COUNT(*) FROM pharmacies WHERE is_verified = 1")
-    verified_pharmacies = cursor.fetchone()[0]
+    verified = cursor.fetchone()[0]
     cursor.execute("SELECT COUNT(*) FROM pharmacies WHERE is_verified = 0")
-    pending_pharmacies = cursor.fetchone()[0]
+    pending = cursor.fetchone()[0]
     conn.close()
-    return total_pharmacies, verified_pharmacies, pending_pharmacies
+    return total, verified, pending
 
 # ==============================================================================
-# 2. STATES & KEYBOARDS
+# 4. SEARCH HISTORY FUNCTIONS
+# ==============================================================================
+
+def save_search_history(user_id, medicine_name, result_summary=""):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"""
+            INSERT INTO search_history (user_id, medicine_name, result_summary)
+            VALUES ({placeholder}, {placeholder}, {placeholder})
+        """, (user_id, medicine_name, result_summary[:500] if result_summary else ""))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Save search history error: {e}")
+
+def get_user_search_history(user_id, limit=10):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"""
+            SELECT medicine_name, search_date FROM search_history 
+            WHERE user_id = {placeholder} ORDER BY search_date DESC LIMIT {placeholder}
+        """, (user_id, limit))
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+    except Exception as e:
+        logging.error(f"Get search history error: {e}")
+        return []
+
+def get_top_medicines(limit=10):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT medicine_name, COUNT(*) as search_count 
+            FROM search_history 
+            GROUP BY medicine_name 
+            ORDER BY search_count DESC 
+            LIMIT %s
+        """ if DATABASE_URL else """
+            SELECT medicine_name, COUNT(*) as search_count 
+            FROM search_history 
+            GROUP BY medicine_name 
+            ORDER BY search_count DESC 
+            LIMIT ?
+        """, (limit,))
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+    except Exception as e:
+        logging.error(f"Get top medicines error: {e}")
+        return []
+
+# ==============================================================================
+# 5. AI LOGS FUNCTIONS
+# ==============================================================================
+
+def log_ai_request(user_id, request_type, request_data, response_data, status_code, response_time, error=None):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"""
+            INSERT INTO ai_logs 
+            (user_id, request_type, request_data, response_data, status_code, error_message, response_time)
+            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+        """, (user_id, request_type, json.dumps(request_data)[:500], json.dumps(response_data)[:500], status_code, error, response_time))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Log AI request error: {e}")
+
+def get_ai_stats():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM ai_logs")
+        total = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM ai_logs WHERE status_code = 200")
+        successful = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM ai_logs WHERE status_code != 200")
+        errors = cursor.fetchone()[0]
+        cursor.execute("SELECT AVG(response_time) FROM ai_logs")
+        avg_time = cursor.fetchone()[0] or 0
+        conn.close()
+        return {'total': total, 'successful': successful, 'errors': errors, 'avg_time': round(avg_time, 2)}
+    except Exception as e:
+        logging.error(f"Get AI stats error: {e}")
+        return {'total': 0, 'successful': 0, 'errors': 0, 'avg_time': 0}
+
+# ==============================================================================
+# 6. DISTANCE CALCULATION
+# ==============================================================================
+
+def calculate_distance(lat1, lon1, lat2, lon2):
+    R = 6371
+    try:
+        lat1_rad = math.radians(float(lat1))
+        lat2_rad = math.radians(float(lat2))
+        delta_lat = math.radians(float(lat2) - float(lat1))
+        delta_lon = math.radians(float(lon2) - float(lon1))
+        a = math.sin(delta_lat/2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon/2)**2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+        return round(R * c, 2)
+    except:
+        return None
+
+def get_top_pharmacies(limit=10):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT p.id, p.name, p.location, p.phone, COUNT(pr.id) as response_count
+            FROM pharmacies p
+            LEFT JOIN pharmacy_responses pr ON p.id = pr.pharmacy_id
+            WHERE p.is_verified = 1
+            GROUP BY p.id
+            ORDER BY response_count DESC
+            LIMIT %s
+        """ if DATABASE_URL else """
+            SELECT p.id, p.name, p.location, p.phone, COUNT(pr.id) as response_count
+            FROM pharmacies p
+            LEFT JOIN pharmacy_responses pr ON p.id = pr.pharmacy_id
+            WHERE p.is_verified = 1
+            GROUP BY p.id
+            ORDER BY response_count DESC
+            LIMIT ?
+        """, (limit,))
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+    except Exception as e:
+        logging.error(f"Get top pharmacies error: {e}")
+        return []
+
+# ==============================================================================
+# 7. STATES & KEYBOARDS
 # ==============================================================================
 WAITING_FOR_SEARCH = 1
 WAITING_FOR_PRICE = 2
@@ -180,8 +420,8 @@ REG_LICENSE = 13
 MAIN_KEYBOARD = [
     ["🔍 መድኃኒት ፈልግ", "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ"],
     ["📍 አካባቢ ምረጥ", "📋 የፋርማሲዎች ዝርዝር"],
-    ["🏥 ፋርማሲ መዝግብ", "📞 እገዛ / ድጋፍ"],
-    ["🏠 ወደ ዋና ገጽ"]
+    ["🏥 ፋርማሲ መዝግብ", "📊 ስታቲስቲክስ / Stats"],
+    ["📞 እገዛ / ድጋፍ", "🏠 ወደ ዋና ገጽ"]
 ]
 
 LOCATION_KEYBOARD = [
@@ -198,104 +438,56 @@ HOURS_KEYBOARD = [
 ]
 
 # ==============================================================================
-# 3. HANDLERS & LOGIC
-# ==============================================================================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_name = update.effective_user.first_name if update.effective_user else "ወዳጄ"
-
-    welcome_text = (
-        f"👋 ሰላም {user_name}! ወደ አል-ኑር መድኃኒት አፋላጊ በደህና መጡ።\n\n"
-        f"━━━━━━━ ⚖️ ሕጋዊ ማስታወቂያ ━━━━━━━\n"
-        f"• 🏥 ከሕጋዊና ፈቃድ ካላቸው ፋርማሲዎች ጋር ብቻ ያገናኛል።\n"
-        f"• 📄 መድኃኒት ሲገዙ የሐኪም ማዘዣ (Prescription) ይያዙ።\n"
-        f"• ℹ️ ይህ ቦት የመረጃ ማገናኛ እንጂ ሕክምና አይሰጥም።\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👇 የሚፈልጉትን አገልግሎት ከታች ይምረጡ፦"
-    )
-
-    if update.message:
-        try:
-            await update.message.reply_photo(
-                photo=LOGO_FILE_ID,
-                caption=welcome_text,
-                parse_mode="Markdown",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
-            )
-        except Exception as e:
-            logging.error(f"ፎቶ መጫን አልተቻለም፦ {e}")
-            await update.message.reply_text(
-                welcome_text,
-                parse_mode="Markdown",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
-            )
-    return ConversationHandler.END
-
-# ==============================================================================
-# 🤖 Translation AI Handler (Lesan AI - የተሻሻለ)
+# 8. TRANSLATION FUNCTION
 # ==============================================================================
 
 async def translate_to_amharic(english_text):
-    """Translate using Lesan AI with natural Amharic translation"""
-    
-    # ✅ Primary: Lesan AI (ለአማርኛ የተሻሻለ)
     try:
         response = requests.post(
             url="https://api.lesan.ai/translate",
-            json={
-                "text": english_text,
-                "source": "en",
-                "target": "am"
-            },
+            json={"text": english_text, "source": "en", "target": "am"},
             timeout=30
         )
-        
         if response.status_code == 200:
             result = response.json()
-            translation = result.get('translation') or result.get('result')
-            if translation:
-                logging.info("Translation successful using Lesan AI")
-                return translation
+            return result.get('translation') or result.get('result')
     except Exception as e:
         logging.error(f"Lesan AI error: {e}")
     
-    # ✅ Fallback: Google Translate with natural language
     try:
-        logging.info("Falling back to Google Translate...")
         url = "https://translate.googleapis.com/translate_a/single"
-        params = {
-            "client": "gtx",
-            "sl": "en",
-            "tl": "am",
-            "dt": "t",
-            "q": english_text
-        }
+        params = {"client": "gtx", "sl": "en", "tl": "am", "dt": "t", "q": english_text}
         response = requests.get(url, params=params, timeout=10)
         if response.status_code == 200:
             result = response.json()
-            translation = ''.join([part[0] for part in result[0] if part[0]])
-            if translation:
-                logging.info("Translation successful using Google Translate")
-                return translation
+            return ''.join([part[0] for part in result[0] if part[0]])
     except Exception as e:
-        logging.error(f"Google Translate fallback error: {e}")
-    
+        logging.error(f"Google Translate error: {e}")
     return None
 
+def clean_translation(text):
+    lines = text.split('\n')
+    seen = set()
+    unique_lines = []
+    for line in lines:
+        line = line.strip()
+        if line and line not in seen:
+            unique_lines.append(line)
+            seen.add(line)
+    return '\n'.join(unique_lines)
+
 # ==============================================================================
-# 🤖 Medicine Info AI Handler (የተሻሻለ - ለፎቶ ድጋፍ)
+# 9. AI HANDLER
 # ==============================================================================
 
 async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
-    """OpenRouter API በመጠቀም መድሃኒት ተንትን"""
-    
     if not OPENROUTER_API_KEY:
         return "⚠️ OpenRouter API key is missing."
     
+    start_time = time.time()
     try:
-        # ✅ ለፎቶ የተሻሻለ አያያዝ
         if image_bytes:
-            # Resize image if too large (max 1MB)
-            if len(image_bytes) > 1024 * 1024:  # 1MB
+            if len(image_bytes) > 1024 * 1024:
                 try:
                     from PIL import Image
                     import io
@@ -305,8 +497,7 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
                     image.save(buffer, format='JPEG', quality=85)
                     image_bytes = buffer.getvalue()
                 except:
-                    pass  # If PIL not available, use original
-            
+                    pass
             base64_image = base64.b64encode(image_bytes).decode('utf-8')
             user_content = [
                 {"type": "text", "text": prompt},
@@ -317,7 +508,6 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
         else:
             return "❌ No data received. Please send a medicine name or photo."
         
-        # ✅ System message in English
         system_content = """You are a medical professional and pharmacist. 
 Provide accurate, evidence-based information about medications.
 Always include: name, uses, dosage, side effects, and precautions.
@@ -344,21 +534,20 @@ Include a disclaimer that this is for informational purposes only."""
             timeout=120
         )
         
+        response_time = time.time() - start_time
+        result_text = ""
+        
         if response.status_code != 200:
             error_detail = response.text
             logging.error(f"OpenRouter API Error {response.status_code}: {error_detail}")
-            
-            if "API key" in error_detail:
-                return "⚠️ Invalid OpenRouter API key."
-            elif "quota" in error_detail.lower():
-                return "⚠️ Daily free quota exceeded. Please try again later."
-            elif "model" in error_detail.lower():
-                return f"⚠️ Model '{OPENROUTER_MODEL}' not found."
-            else:
-                return f"❌ API Error: {response.status_code}"
+            result_text = f"❌ API Error: {response.status_code}"
+            log_ai_request(None, "medicine_info", {"prompt": prompt[:100]}, {"error": error_detail}, response.status_code, response_time, error_detail)
+            return result_text
         
         result = response.json()
-        return result['choices'][0]['message']['content']
+        result_text = result['choices'][0]['message']['content']
+        log_ai_request(None, "medicine_info", {"prompt": prompt[:100]}, {"response": result_text[:200]}, 200, response_time)
+        return result_text
             
     except requests.exceptions.Timeout:
         return "⏱️ Request timed out. Please try again."
@@ -366,7 +555,37 @@ Include a disclaimer that this is for informational purposes only."""
         logging.error(f"OpenRouter API error: {e}")
         return f"❌ Error: {str(e)[:100]}"
 
-# ----------------- AI የመድኃኒት መረጃ ማብራሪያ SECTION -----------------
+# ==============================================================================
+# 10. HANDLERS
+# ==============================================================================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_name = update.effective_user.first_name if update.effective_user else "ወዳጄ"
+    welcome_text = (
+        f"👋 ሰላም {user_name}! ወደ አል-ኑር መድኃኒት አፋላጊ በደህና መጡ።\n\n"
+        f"━━━━━━━ ⚖️ ሕጋዊ ማስታወቂያ ━━━━━━━\n"
+        f"• 🏥 ከሕጋዊና ፈቃድ ካላቸው ፋርማሲዎች ጋር ብቻ ያገናኛል።\n"
+        f"• 📄 መድኃኒት ሲገዙ የሐኪም ማዘዣ (Prescription) ይያዙ።\n"
+        f"• ℹ️ ይህ ቦት የመረጃ ማገናኛ እንጂ ሕክምና አይሰጥም።\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👇 የሚፈልጉትን አገልግሎት ከታች ይምረጡ፦"
+    )
+    if update.message:
+        try:
+            await update.message.reply_photo(
+                photo=LOGO_FILE_ID,
+                caption=welcome_text,
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
+            )
+        except Exception as e:
+            logging.error(f"ፎቶ መጫን አልተቻለም፦ {e}")
+            await update.message.reply_text(
+                welcome_text,
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
+            )
+    return ConversationHandler.END
 
 async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -380,8 +599,6 @@ async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return WAITING_FOR_MED_INFO
 
 async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle translation using Lesan AI with natural Amharic"""
-    
     query = update.callback_query
     await query.answer()
     
@@ -399,16 +616,12 @@ async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     try:
         amharic_text = await translate_to_amharic(english_text)
-        
         if amharic_text:
-            # ✅ Clean up the translation (remove duplicate phrases)
             amharic_text = clean_translation(amharic_text)
-            
             inline_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📝 Show English", callback_data="show_english")],
                 [InlineKeyboardButton("🏠 ወደ ዋና ገጽ", callback_data="go_home")]
             ])
-            
             await query.edit_message_text(
                 f"💡 **የመድኃኒት መረጃ (አማርኛ)**\n\n{amharic_text}\n\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -416,61 +629,24 @@ async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 parse_mode="Markdown",
                 reply_markup=inline_keyboard
             )
-            
             context.user_data["last_amharic_response"] = amharic_text
         else:
-            await query.edit_message_text(
-                "❌ ትርጉሙ አልተሳካም። እባክዎ እንደገና ይሞክሩ።\n\n"
-                "💡 ወይም የእንግሊዝኛውን ቅጂ ይጠቀሙ።"
-            )
-            
+            await query.edit_message_text("❌ ትርጉሙ አልተሳካም። እባክዎ እንደገና ይሞክሩ።")
     except Exception as e:
         logging.error(f"Translation error: {e}")
         await query.edit_message_text(f"❌ የትርጉም ስህተት: {str(e)[:200]}")
 
-def clean_translation(text):
-    """Clean up translation - remove duplicate phrases and unnatural wording"""
-    # Remove common duplicate phrases
-    duplicates = [
-        "ይህ መረጃ", "ለግንዛቤ", "ብቻ ነው",
-        "ሁልጊዜ", "የሐኪም", "መመሪያ"
-    ]
-    
-    lines = text.split('\n')
-    unique_lines = []
-    seen = set()
-    
-    for line in lines:
-        line = line.strip()
-        if line and line not in seen:
-            # Check if line contains any duplicate phrase
-            is_duplicate = False
-            for dup in duplicates:
-                if dup in line and line.count(dup) > 1:
-                    is_duplicate = True
-                    break
-            if not is_duplicate:
-                unique_lines.append(line)
-                seen.add(line)
-    
-    return '\n'.join(unique_lines)
-
 async def show_english_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show the original English response again"""
-    
     query = update.callback_query
     await query.answer()
-    
     english_text = context.user_data.get("last_english_response")
     if not english_text:
         await query.edit_message_text("⚠️ No English text found.")
         return
-
     inline_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📝 Translate to Amharic", callback_data="translate_amharic")],
         [InlineKeyboardButton("🏠 ወደ ዋና ገጽ", callback_data="go_home")]
     ])
-
     await query.edit_message_text(
         f"💡 **Medical Information (English)**\n\n{english_text}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -478,6 +654,8 @@ async def show_english_callback(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode="Markdown",
         reply_markup=inline_keyboard
     )
+
+import time
 
 async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
@@ -496,28 +674,20 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     wait_msg = await msg.reply_text("⏳ Fetching medical information... Please wait...")
 
-    # ✅ Check if it's a photo
     image_bytes = None
     text = None
+    user_id = update.effective_user.id if update.effective_user else None
     
     if msg.photo:
         photo_file = await msg.photo[-1].get_file()
         image_bytes = await photo_file.download_as_bytearray()
         logging.info(f"Photo received: {len(image_bytes)} bytes")
         await msg.reply_text("📷 Photo received! Analyzing...")
-        
-    elif msg.document:
-        if msg.document.mime_type and msg.document.mime_type.startswith('image/'):
-            doc_file = await msg.document.get_file()
-            image_bytes = await doc_file.download_as_bytearray()
-            logging.info(f"Document image received: {len(image_bytes)} bytes")
-            await msg.reply_text("📷 Image document received! Analyzing...")
-        else:
-            await msg.reply_text(
-                "❌ Please send an image file (JPG, PNG, etc.) or a medicine name.",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-            return WAITING_FOR_MED_INFO
+    elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith('image/'):
+        doc_file = await msg.document.get_file()
+        image_bytes = await doc_file.download_as_bytearray()
+        logging.info(f"Document image received: {len(image_bytes)} bytes")
+        await msg.reply_text("📷 Image document received! Analyzing...")
     elif msg.text:
         text = msg.text
     else:
@@ -527,16 +697,13 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return WAITING_FOR_MED_INFO
 
-    # ✅ Prompt for photo or text
     if image_bytes:
         prompt = """Analyze this prescription or medicine photo and provide detailed information about the medication:
 1. Name (generic and brand names if applicable)
 2. Primary uses and indications
 3. Dosage and administration
 4. Common side effects
-5. Precautions and contraindications
-
-If you can see a prescription, extract the medication names and provide information about them."""
+5. Precautions and contraindications"""
     else:
         prompt = f"""Provide detailed medical information about the following medication:
 
@@ -554,6 +721,12 @@ Medication: {text}"""
         if english_response.startswith("❌") or english_response.startswith("⚠️"):
             await wait_msg.edit_text(english_response)
             return ConversationHandler.END
+
+        # Save search history
+        if text:
+            save_search_history(user_id, text, english_response[:200])
+        else:
+            save_search_history(user_id, "photo_prescription", english_response[:200])
 
         context.user_data["last_english_response"] = english_response
 
@@ -582,9 +755,6 @@ Medication: {text}"""
 
     return ConversationHandler.END
 
-# ==============================================================================
-# የቀሩት ሁሉም HANDLERS
-# ==============================================================================
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_CHAT_ID:
@@ -602,7 +772,48 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(stats_text, parse_mode="Markdown")
 
+async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """📊 የስርዓት ስታቲስቲክስ ማሳየት"""
+    
+    ai_stats = get_ai_stats()
+    total_pharms = get_bot_statistics()
+    top_meds = get_top_medicines(5)
+    top_pharms = get_top_pharmacies(5)
+    search_history = get_user_search_history(update.effective_user.id, 5)
+    
+    text = f"📊 **የስርዓት ስታቲስቲክስ**\n\n"
+    text += f"🤖 **AI አጠቃቀም**\n"
+    text += f"• ጠቅላላ ጥያቄዎች: {ai_stats['total']}\n"
+    text += f"• ስኬታማ: {ai_stats['successful']}\n"
+    text += f"• ስህተቶች: {ai_stats['errors']}\n"
+    text += f"• አማካይ ምላሽ ጊዜ: {ai_stats['avg_time']} ሰከንድ\n\n"
+    
+    text += f"🏥 **ፋርማሲዎች**\n"
+    text += f"• ጠቅላላ: {total_pharms[0]}\n"
+    text += f"• የተረጋገጡ: {total_pharms[1]}\n"
+    text += f"• ማረጋገጫ የሚጠብቁ: {total_pharms[2]}\n\n"
+    
+    if top_meds:
+        text += f"🏆 **ከፍተኛ መድኃኒቶች**\n"
+        for idx, (med, count) in enumerate(top_meds, 1):
+            text += f"• {idx}. {med} ({count} ጊዜ)\n"
+        text += "\n"
+    
+    if top_pharms:
+        text += f"🏆 **ከፍተኛ ፋርማሲዎች**\n"
+        for idx, (pid, name, loc, phone, count) in enumerate(top_pharms, 1):
+            text += f"• {idx}. {name} ({count} ምላሾች)\n"
+        text += "\n"
+    
+    if search_history:
+        text += f"📝 **የቅርብ ጊዜ ፍለጋዎች**\n"
+        for med, date in search_history:
+            text += f"• {med} - {date.strftime('%Y-%m-%d %H:%M') if isinstance(date, datetime) else date}\n"
+    
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
+
 async def list_pharmacies(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """📋 የፋርማሲዎች ዝርዝር ከደረጃ ጋር"""
     pharmacies = get_all_verified_pharmacies()
     if not pharmacies:
         await update.message.reply_text(
@@ -611,22 +822,32 @@ async def list_pharmacies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    text = "🏥 የተመዘገቡ ሕጋዊ ፋርማሲዎች ዝርዝር፦\n\n"
-    for idx, (name, loc, phone, hours) in enumerate(pharmacies, 1):
-        text += f"{idx}. {name}\n"
+    # Get top pharmacies for ranking
+    top_pharms = get_top_pharmacies(100)
+    pharm_rank = {pid: idx+1 for idx, (pid, _, _, _, _) in enumerate(top_pharms)}
+    
+    text = "🏥 **የተመዘገቡ ሕጋዊ ፋርማሲዎች ዝርዝር**\n\n"
+    
+    for idx, (pid, name, loc, phone, hours, lat, lon) in enumerate(pharmacies, 1):
+        rank = pharm_rank.get(pid, '—')
+        rank_emoji = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else f"#{rank}"
+        text += f"{rank_emoji} **{name}**\n"
         text += f"   📍 አካባቢ፦ {loc}\n"
         text += f"   📞 ስልክ፦ {phone}\n"
         text += f"   🕒 የስራ ሰዓት፦ {hours}\n"
         text += "────────────────────\n"
+        
+        # Split long messages
+        if len(text) > 3500:
+            await update.message.reply_text(text, parse_mode="Markdown")
+            text = ""
 
-    await update.message.reply_text(
-        text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-    )
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
 
 async def select_location_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_loc = context.user_data.get("user_location", "አልተመረጠም")
     await update.message.reply_text(
-        f"📍 የአካባቢ መምረጫ\n\n"
+        f"📍 **የአካባቢ መምረጫ**\n\n"
         f"አሁን የተመረጠው አካባቢ፦ {current_loc}\n\n"
         f"እባክዎ የሚገኙበትን ክፍለ ከተማ ከታች ካሉት አዝራሮች ይምረጡ ወይም ይጻፉልን፦",
         reply_markup=ReplyKeyboardMarkup(LOCATION_KEYBOARD, resize_keyboard=True),
@@ -637,7 +858,6 @@ async def save_user_location(update: Update, context: ContextTypes.DEFAULT_TYPE)
     msg = update.message
     if msg.text == "🏠 ወደ ዋና ገጽ":
         return await start(update, context)
-
     selected_loc = msg.text
     context.user_data["user_location"] = selected_loc
     await msg.reply_text(
@@ -671,12 +891,15 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
             "📋 የፋርማሲዎች ዝርዝር",
             "🏥 ፋርማሲ መዝግብ",
             "📞 እገዛ / ድጋፍ",
-            "🏠 ወደ ዋና ገጽ"
+            "🏠 ወደ ዋና ገጽ",
+            "📊 ስታቲስቲክስ / Stats"
         ]
         
         if msg.text in menu_buttons:
             if msg.text == "🔍 መድኃኒት ፈልግ":
                 return await prompt_search(update, context)
+            elif msg.text == "📊 ስታቲስቲክስ / Stats":
+                return await show_stats(update, context)
             else:
                 await start(update, context)
                 return ConversationHandler.END
@@ -734,7 +957,6 @@ async def handle_pharmacy_response(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     await query.answer()
     data = query.data
-
     action, customer_id = data.rsplit("_", 1)
     context.chat_data["target_customer_id"] = customer_id
 
@@ -764,17 +986,25 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
     customer_id = context.chat_data.get("target_customer_id")
     pharmacy_chat_id = msg.chat_id
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    placeholder = "%s" if DATABASE_URL else "?"
-    cursor.execute(f"SELECT name, location, phone, operating_hours FROM pharmacies WHERE chat_id = {placeholder} ORDER BY id DESC LIMIT 1", (pharmacy_chat_id,))
-    pharm_info = cursor.fetchone()
-    conn.close()
-
+    pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
     pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
     pharm_loc = pharm_info[1] if pharm_info else "ያልተጠቀሰ"
     pharm_phone = pharm_info[2] if pharm_info else "ያልተጠቀሰ"
     pharm_hours = pharm_info[3] if pharm_info and pharm_info[3] else "ያልተጠቀሰ"
+
+    # Save pharmacy response
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"""
+            INSERT INTO pharmacy_responses (pharmacy_id, customer_id, medicine_name, price)
+            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder})
+        """, (pharmacy_chat_id, customer_id, price_details[:50], price_details))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Save pharmacy response error: {e}")
 
     await msg.reply_text("✅ ዋጋው እና መረጃው ለደንበኛው በስኬት ተልኳል!", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
 
@@ -895,7 +1125,7 @@ async def reg_get_license(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📞 አል-ኑር መድኃኒት አፋላጊ - የደንበኞች ድጋፍ\n\n"
+        "📞 **አል-ኑር መድኃኒት አፋላጊ - የደንበኞች ድጋፍ**\n\n"
         "ማንኛውም ጥያቄ ወይም አስተያየት ካለዎት፦\n"
         "• ስልክ፦ +251 911 00 00 00\n"
         "• ቴሌግራም፦ @AlNoorSupport",
@@ -906,8 +1136,9 @@ async def error_handler_func(update: object, context: ContextTypes.DEFAULT_TYPE)
     logging.error(msg="Exception while handling an update:", exc_info=context.error)
 
 # ==============================================================================
-# 4. MAIN FUNCTION
+# 11. MAIN FUNCTION
 # ==============================================================================
+
 def main():
     init_db()
     threading.Thread(target=run_flask, daemon=True).start()
@@ -955,6 +1186,7 @@ def main():
     app.add_handler(CommandHandler("stats", admin_stats))
     app.add_handler(MessageHandler(filters.Regex("^📞 እገዛ / ድጋፍ$"), show_help))
     app.add_handler(MessageHandler(filters.Regex("^📋 የፋርማሲዎች ዝርዝር$"), list_pharmacies))
+    app.add_handler(MessageHandler(filters.Regex("^📊 ስታቲስቲክስ / Stats$"), show_stats))
     app.add_handler(CallbackQueryHandler(handle_admin_approval, pattern="^verify_"))
     app.add_handler(CallbackQueryHandler(translate_callback, pattern="^(translate_amharic|go_home)$"))
     app.add_handler(CallbackQueryHandler(show_english_callback, pattern="^show_english$"))
