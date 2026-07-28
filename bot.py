@@ -317,6 +317,18 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if msg.text == "🏠 ወደ ዋና ገጽ":
         return await start(update, context)
 
+    # መጀመሪያ ከዳታቤዝ ፈልግ
+    if msg.text:
+        local_info = get_medicine_info(msg.text)
+        if local_info:
+            await msg.reply_text(
+                local_info,
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+            return ConversationHandler.END
+
+    # ካልተገኘ AI ተጠቀም (ግን የተሻሻለ ፕሮምፕት ተጠቀም)
     if not OPENROUTER_API_KEY:
         await msg.reply_text(
             "⚠️ የ AI አገልግሎቱ ለጊዜው አልተዋቀረም።",
@@ -324,54 +336,38 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
 
-    # ✅ የተሻሻለ መልእክት
-    wait_msg = await msg.reply_text("⏳ መረጃውን እያዘጋጀሁ ነው... እባክዎ ትንሽ ይጠብቁ...")
+    await msg.reply_text("⏳ መረጃውን እያዘጋጀሁ ነው... ትንሽ ይጠብቁ...")
 
-    prompt = get_medicine_prompt(msg.text)
+    # የተሻሻለ ፕሮምፕት
+    prompt = (
+        "እባክህ ስለ መድሃኒት ትክክለኛ እና አስተማማኝ መረጃ ስጥ።\n\n"
+        "የሚከተለውን መድሃኒት በዚህ ቅርጸት አብራራ፦\n\n"
+        "1. ትክክለኛ የመድሃኒቱ ስም\n"
+        "2. ዋነኛ ጥቅም (ለምን ይውላል)\n"
+        "3. አወሳሰድ (እንዴት እንደሚወሰድ)\n"
+        "4. ሊከሰቱ የሚችሉ የጎንዮሽ ጉዳቶች\n"
+        "5. ጥንቃቄዎች እና ማስጠንቀቂያዎች\n\n"
+        "ማስታወሻ፦ መረጃው ከታወቁ የጤና ምንጮች የተወሰደ እና ለግንዛቤ ብቻ መሆኑን ግለጽ።\n\n"
+        f"መድሃኒቱ፦ {msg.text}"
+    )
 
     try:
-        # ✅ ከጊዜ ገደብ ጋር
-        response_text = await asyncio.wait_for(
-            analyze_with_openrouter(prompt, text=msg.text),
-            timeout=90.0  # 90 ሰከንድ
-        )
+        response_text = await analyze_with_openrouter(prompt, text=msg.text)
         
-        # መልሱን አስተካክል
-        cleaned_response = clean_response(response_text)
-        
-        await wait_msg.delete()
         await msg.reply_text(
-            f"💡 **የመድኃኒት መረጃ**\n\n{cleaned_response}\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💡 የመድኃኒት መረጃ፦\n\n{response_text}\n\n"
             f"⚠️ *ማስታወሻ፦ ይህ መረጃ ለግንዛቤ ብቻ ነው። ሁልጊዜ የሐኪምዎን መመሪያ ይከተሉ።*",
             parse_mode="Markdown",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
-    except asyncio.TimeoutError:
-        await wait_msg.edit_text(
-            "⏱️ የጊዜ ገደብ አልፏል።\n\n"
-            "📝 እባክዎ የመድኃኒቱን ስም በጽሑፍ ይላኩልን።\n"
-            "🤖 AI መረጃውን በፍጥነት ይመልሳል።\n\n"
-            "💡 ወይም ትንሽ ቆይተው እንደገና ይሞክሩ።",
+    except Exception as e:
+        await msg.reply_text(
+            f"❌ መረጃውን ማግኘት አልተቻለም።\n\n`{str(e)[:200]}`",
+            parse_mode="Markdown",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
-    except Exception as e:
-        error_msg = str(e)
-        logging.error(f"Error: {error_msg}")
-        
-        if "quota" in error_msg.lower():
-            await wait_msg.edit_text(
-                "⚠️ የዕለት ነጻ ጥቅል ገደብ አልፏል።\n\n"
-                "📅 እባክዎ ነገ ከጠዋቱ 3:00 ጀምሮ እንደገና ይሞክሩት!\n\n"
-                "🤖 AI መረጃውን በፍጥነት ይመልሳል።",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-        else:
-            await wait_msg.edit_text(
-                f"❌ መረጃውን ማግኘት አልተቻለም።\n\n`{error_msg[:200]}`",
-                parse_mode="Markdown",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
+
+    return ConversationHandler.END
 MEDICINE_PROMPTS = {
     "amoxicillin": """
 ስለ Amoxicillin መድሃኒት የሚከተለውን መረጃ ስጥ፦
