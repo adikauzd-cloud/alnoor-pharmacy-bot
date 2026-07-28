@@ -231,11 +231,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==============================================================================
-# 🤖 Translation AI Handler (Lesan AI)
+# 🤖 Translation AI Handler (Lesan AI - የተሻሻለ)
 # ==============================================================================
 
 async def translate_to_amharic(english_text):
-    """Translate using Lesan AI with fallback to Google Translate"""
+    """Translate using Lesan AI with natural Amharic translation"""
     
     # ✅ Primary: Lesan AI (ለአማርኛ የተሻሻለ)
     try:
@@ -258,7 +258,7 @@ async def translate_to_amharic(english_text):
     except Exception as e:
         logging.error(f"Lesan AI error: {e}")
     
-    # ✅ Fallback: Google Translate
+    # ✅ Fallback: Google Translate with natural language
     try:
         logging.info("Falling back to Google Translate...")
         url = "https://translate.googleapis.com/translate_a/single"
@@ -282,7 +282,7 @@ async def translate_to_amharic(english_text):
     return None
 
 # ==============================================================================
-# 🤖 Medicine Info AI Handler
+# 🤖 Medicine Info AI Handler (የተሻሻለ - ለፎቶ ድጋፍ)
 # ==============================================================================
 
 async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
@@ -292,14 +292,28 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
         return "⚠️ OpenRouter API key is missing."
     
     try:
-        if text:
-            user_content = f"{prompt}\n\nMedicine: {text}"
-        elif image_bytes:
+        # ✅ ለፎቶ የተሻሻለ አያያዝ
+        if image_bytes:
+            # Resize image if too large (max 1MB)
+            if len(image_bytes) > 1024 * 1024:  # 1MB
+                try:
+                    from PIL import Image
+                    import io
+                    image = Image.open(io.BytesIO(image_bytes))
+                    image.thumbnail((1024, 1024))
+                    buffer = io.BytesIO()
+                    image.save(buffer, format='JPEG', quality=85)
+                    image_bytes = buffer.getvalue()
+                except:
+                    pass  # If PIL not available, use original
+            
             base64_image = base64.b64encode(image_bytes).decode('utf-8')
             user_content = [
                 {"type": "text", "text": prompt},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
             ]
+        elif text:
+            user_content = f"{prompt}\n\nMedicine: {text}"
         else:
             return "❌ No data received. Please send a medicine name or photo."
         
@@ -366,7 +380,7 @@ async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return WAITING_FOR_MED_INFO
 
 async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle translation using Lesan AI with fallback"""
+    """Handle translation using Lesan AI with natural Amharic"""
     
     query = update.callback_query
     await query.answer()
@@ -381,12 +395,15 @@ async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text("⚠️ No English text to translate.")
         return
 
-    await query.edit_message_text("⏳ Translating to Amharic using Lesan AI... Please wait...")
+    await query.edit_message_text("⏳ ወደ አማርኛ እየተረጎመ ነው... እባክዎ ይጠብቁ...")
 
     try:
         amharic_text = await translate_to_amharic(english_text)
         
         if amharic_text:
+            # ✅ Clean up the translation (remove duplicate phrases)
+            amharic_text = clean_translation(amharic_text)
+            
             inline_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📝 Show English", callback_data="show_english")],
                 [InlineKeyboardButton("🏠 ወደ ዋና ገጽ", callback_data="go_home")]
@@ -403,13 +420,40 @@ async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             context.user_data["last_amharic_response"] = amharic_text
         else:
             await query.edit_message_text(
-                "❌ Translation failed. Please try again later.\n\n"
+                "❌ ትርጉሙ አልተሳካም። እባክዎ እንደገና ይሞክሩ።\n\n"
                 "💡 ወይም የእንግሊዝኛውን ቅጂ ይጠቀሙ።"
             )
             
     except Exception as e:
         logging.error(f"Translation error: {e}")
-        await query.edit_message_text(f"❌ Translation error: {str(e)[:200]}")
+        await query.edit_message_text(f"❌ የትርጉም ስህተት: {str(e)[:200]}")
+
+def clean_translation(text):
+    """Clean up translation - remove duplicate phrases and unnatural wording"""
+    # Remove common duplicate phrases
+    duplicates = [
+        "ይህ መረጃ", "ለግንዛቤ", "ብቻ ነው",
+        "ሁልጊዜ", "የሐኪም", "መመሪያ"
+    ]
+    
+    lines = text.split('\n')
+    unique_lines = []
+    seen = set()
+    
+    for line in lines:
+        line = line.strip()
+        if line and line not in seen:
+            # Check if line contains any duplicate phrase
+            is_duplicate = False
+            for dup in duplicates:
+                if dup in line and line.count(dup) > 1:
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                unique_lines.append(line)
+                seen.add(line)
+    
+    return '\n'.join(unique_lines)
 
 async def show_english_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show the original English response again"""
@@ -452,8 +496,49 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     wait_msg = await msg.reply_text("⏳ Fetching medical information... Please wait...")
 
-    # ✅ Prompt in English for better accuracy
-    prompt = f"""Provide detailed medical information about the following medication:
+    # ✅ Check if it's a photo
+    image_bytes = None
+    text = None
+    
+    if msg.photo:
+        photo_file = await msg.photo[-1].get_file()
+        image_bytes = await photo_file.download_as_bytearray()
+        logging.info(f"Photo received: {len(image_bytes)} bytes")
+        await msg.reply_text("📷 Photo received! Analyzing...")
+        
+    elif msg.document:
+        if msg.document.mime_type and msg.document.mime_type.startswith('image/'):
+            doc_file = await msg.document.get_file()
+            image_bytes = await doc_file.download_as_bytearray()
+            logging.info(f"Document image received: {len(image_bytes)} bytes")
+            await msg.reply_text("📷 Image document received! Analyzing...")
+        else:
+            await msg.reply_text(
+                "❌ Please send an image file (JPG, PNG, etc.) or a medicine name.",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+            return WAITING_FOR_MED_INFO
+    elif msg.text:
+        text = msg.text
+    else:
+        await msg.reply_text(
+            "❌ Please send a medicine name or photo.",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        return WAITING_FOR_MED_INFO
+
+    # ✅ Prompt for photo or text
+    if image_bytes:
+        prompt = """Analyze this prescription or medicine photo and provide detailed information about the medication:
+1. Name (generic and brand names if applicable)
+2. Primary uses and indications
+3. Dosage and administration
+4. Common side effects
+5. Precautions and contraindications
+
+If you can see a prescription, extract the medication names and provide information about them."""
+    else:
+        prompt = f"""Provide detailed medical information about the following medication:
 
 1. Name (generic and brand names if applicable)
 2. Primary uses and indications
@@ -461,20 +546,17 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 4. Common side effects
 5. Precautions and contraindications
 
-Medication: {msg.text if msg.text else 'Unknown'}"""
+Medication: {text}"""
 
     try:
-        # ✅ Get English response from AI
-        english_response = await analyze_with_openrouter(prompt, text=msg.text if msg.text else None)
+        english_response = await analyze_with_openrouter(prompt, text=text if not image_bytes else None, image_bytes=image_bytes)
         
         if english_response.startswith("❌") or english_response.startswith("⚠️"):
             await wait_msg.edit_text(english_response)
             return ConversationHandler.END
 
-        # ✅ Store English response for translation
         context.user_data["last_english_response"] = english_response
 
-        # ✅ Inline keyboard for translation
         inline_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📝 Translate to Amharic", callback_data="translate_amharic")],
             [InlineKeyboardButton("🏠 ወደ ዋና ገጽ", callback_data="go_home")]
