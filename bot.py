@@ -236,14 +236,13 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
     """OpenRouter API በመጠቀም መድሃኒት ተንትን"""
     
     if not OPENROUTER_API_KEY:
-        return "⚠️ የOpenRouter AI አገልግሎት ቁልፍ አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
+        return "⚠️ የOpenRouter AI አገልግሎት ቁልፍ አልተገኘም።"
     
     try:
-        # የጥያቄ ይዘት ማዘጋጀት
+        # ✅ የጥያቄ ይዘት ማዘጋጀት
         if text:
             user_content = f"{prompt}\n\nየመድኃኒቱ ስም፦ {text}"
         elif image_bytes:
-            # OpenRouter ለፎቶ የሚሰራበት መንገድ
             base64_image = base64.b64encode(image_bytes).decode('utf-8')
             user_content = [
                 {"type": "text", "text": prompt},
@@ -259,6 +258,7 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
             "X-Title": "Al-Noor Pharmacy Bot"
         }
         
+        # ✅ ትክክለኛ የጥያቄ ቅርጸት
         payload = {
             "model": OPENROUTER_MODEL,
             "messages": [
@@ -275,8 +275,11 @@ async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
             error_detail = response.text
             logging.error(f"OpenRouter API Error {response.status_code}: {error_detail}")
             
-            if "insufficient_quota" in error_detail:
-                return "⚠️ የነጻ ጥቅም ገደብ አልፏል። እባክዎ በኋላ ይሞክሩ ወይም ክሬዲት ይጨምሩ።"
+            # ✅ ግልጽ የሆነ የስህተት መልእክት
+            if "model" in error_detail.lower():
+                return "⚠️ የተመረጠው ሞዴል አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
+            elif "insufficient_quota" in error_detail:
+                return "⚠️ የነጻ ጥቅም ገደብ አልፏል። እባክዎ በኋላ ይሞክሩ።"
             else:
                 return f"❌ የOpenRouter API ስህተት፦ {response.status_code}"
         
