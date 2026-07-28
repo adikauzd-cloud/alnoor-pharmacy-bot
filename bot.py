@@ -314,96 +314,67 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not OPENROUTER_API_KEY:
         await msg.reply_text(
-            "⚠️ የ AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
+            "⚠️ AI service is not configured.",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         return ConversationHandler.END
 
-    if msg.text and msg.text not in ["📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ"]:
-        await msg.reply_text("⏳ መረጃውን እያዘጋጀሁ ነው... ትንሽ ይጠብቁ...")
-        
-        prompt = f"ስለ {msg.text} መድኃኒት መረጃ ስጥ፦ ስም፣ ጥቅም፣ አወሳሰድ፣ ጎንዮሽ ጉዳቶች"
-        
-        try:
-            response_text = await analyze_with_openrouter(prompt, text=msg.text)
-            await msg.reply_text(
-                f"💡 የመድኃኒት መረጃ፦\n\n{response_text}\n\n"
-                f"⚠️ *ማስታወሻ፦ ይህ መረጃ ለግንዛቤ ብቻ ነው።*",
-                parse_mode="Markdown",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-        except Exception as e:
-            await msg.reply_text(
-                f"❌ መረጃውን ማግኘት አልተቻለም።\n\n`{str(e)[:200]}`",
-                parse_mode="Markdown"
-            )
-        return ConversationHandler.END
+    # Check user preference (default: English)
+    user_lang = context.user_data.get("language", "english")
 
-    await msg.reply_text("⏳ መረጃው በ AI በመተንተን ላይ ነው... እባክዎ ትንሽ ይጠብቁ...")
+    prompt = f"""Provide detailed medical information about the following medication:
 
-    prompt = (
-        "እባክህ የዚህን መድኃኒት ወይም የሐኪም ማዘዣ ፎቶ መዝገብ ተንትነህ በሚከተለው መልኩ በአማርኛ አብራራ፦\n"
-        "1. የመድኃኒቱ ስም (Medication Name)\n"
-        "2. ዋነኛ ጥቅም (Primary Usage)\n"
-        "3. አወሳሰድ እና ጥንቃቄዎች (Dosage & Precautions)\n"
-        "4. ሊከሰቱ የሚችሉ የጎንዮሽ ጉዳቶች (Side Effects)\n\n"
-        "ማስታወሻ፦ መረጃው ለግንዛቤ ብቻ እንደሆነ እና የሐኪም ምክርን እንደማይተካ በጥሩ ስነ-ምግባር ግለጽ።"
-    )
+1. Name (generic and brand names if applicable)
+2. Primary uses and indications
+3. Dosage and administration
+4. Common side effects
+5. Precautions and contraindications
+
+Medication: {msg.text}"""
+
+    wait_msg = await msg.reply_text("⏳ Fetching medical information... Please wait...")
 
     try:
-        image_bytes = None
-        text = None
+        result = await analyze_with_openrouter(prompt, text=msg.text, language=user_lang)
         
-        if msg.photo:
-            photo_file = await msg.photo[-1].get_file()
-            image_bytes = await photo_file.download_as_bytearray()
-            response_text = await analyze_with_openrouter(prompt, text=None, image_bytes=image_bytes)
-            
-        elif msg.text:
-            text = msg.text
-            response_text = await analyze_with_openrouter(prompt, text=text, image_bytes=None)
-        else:
+        if isinstance(result, dict):
+            # Send English version first
+            await wait_msg.delete()
             await msg.reply_text(
-                "❌ የላኩት ግብዓት ስላልገባኝ ድጋሚ ይሞክሩ።",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+                f"💡 **Medical Information (English)**\n\n{result['english']}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📝 *Want Amharic translation? Type: /translate*",
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(
+                    [["📝 Translate to Amharic", "🏠 ወደ ዋና ገጽ"]],
+                    resize_keyboard=True
+                )
             )
-            return ConversationHandler.END
-
-        await msg.reply_text(
-            f"💡 የመድኃኒት መረጃ ማብራሪያ፦\n\n{response_text}\n\n"
-            f"⚠️ *ማስታወሻ፦ ይህ መረጃ በ AI የተዘጋጀ ለግንዛቤ ብቻ የሚያገለግል ነው። ሁልጊዜ የሐኪምዎን ወይም የፋርማሲስቱን መመሪያ ይከተሉ።*",
+            
+            # Store English response for later translation
+            context.user_data["last_english_response"] = result['english']
+            
+            # If Amharic translation is available, send it too
+            if result.get('amharic'):
+                await msg.reply_text(
+                    f"💡 **የመድኃኒት መረጃ (አማርኛ)**\n\n{result['amharic']}\n\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"⚠️ *ይህ መረጃ ለግንዛቤ ብቻ ነው። ሁልጊዜ የሐኪምዎን መመሪያ ይከተሉ።*",
+                    parse_mode="Markdown"
+                )
+        else:
+            await wait_msg.edit_text(f"❌ {result}")
+            
+    except Exception as e:
+        error_msg = str(e)
+        logging.error(f"Error: {error_msg}")
+        await wait_msg.edit_text(
+            f"❌ Failed to get information.\n\n`{error_msg[:200]}`",
             parse_mode="Markdown",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
-    except Exception as e:
-        error_msg = str(e)
-        logging.error(f"OpenRouter error: {error_msg}")
-        
-        if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
-            await msg.reply_text(
-                "⏱️ የጊዜ ገደብ አልፏል።\n\n"
-                "📝 እባክዎ የመድኃኒቱን ስም በጽሑፍ ይላኩልን።\n"
-                "🤖 AI መረጃውን በፍጥነት ይመልሳል።\n\n"
-                "💡 ወይም ትንሽ ቆይተው እንደገና ይሞክሩ።",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-        elif "quota" in error_msg.lower():
-            await msg.reply_text(
-                "⚠️ የዕለት ነጻ ጥቅል ገደብ አልፏል።\n\n"
-                "📅 እባክዎ ነገ ከጠዋቱ 3:00 ጀምሮ እንደገና ይሞክሩት!\n\n"
-                "🤖 AI መረጃውን በፍጥነት ይመልሳል።\n\n"
-                "💡 ወይም ትንሽ ቆይተው እንደገና ይሞክሩ።",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-        else:
-            await msg.reply_text(
-                f"❌ መረጃውን መተንተን አልተቻለም።\n\n`{str(e)[:200]}`",
-                parse_mode="Markdown",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
 
     return ConversationHandler.END
-
 # ==============================================================================
 # የቀሩት ሁሉም HANDLERS
 # ==============================================================================
