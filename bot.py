@@ -4,6 +4,7 @@ import threading
 import psycopg2
 import requests
 import json
+import base64
 from flask import Flask
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -41,10 +42,10 @@ if not BOT_TOKEN:
 
 LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
 
-# DeepSeek Configuration
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
-DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
-DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+# OpenRouter Configuration
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.0-flash-exp:free")
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -228,61 +229,64 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==============================================================================
-# 🤖 AI Handler (DeepSeek)
+# 🤖 AI Handler (OpenRouter)
 # ==============================================================================
 
-async def analyze_with_deepseek(prompt, text=None, image_bytes=None):
-    """DeepSeek API በመጠቀም መድሃኒት ተንትን"""
+async def analyze_with_openrouter(prompt, text=None, image_bytes=None):
+    """OpenRouter API በመጠቀም መድሃኒት ተንትን"""
     
-    if not DEEPSEEK_API_KEY:
-        return "⚠️ የDeepSeek AI አገልግሎት ቁልፍ አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
+    if not OPENROUTER_API_KEY:
+        return "⚠️ የOpenRouter AI አገልግሎት ቁልፍ አልተገኘም። እባክዎ አስተዳዳሪውን ያግኙ።"
     
     try:
+        # የጥያቄ ይዘት ማዘጋጀት
         if text:
             user_content = f"{prompt}\n\nየመድኃኒቱ ስም፦ {text}"
         elif image_bytes:
-            # DeepSeek ምስሎችን አይደግፍም
-            return "📷 ማሳሰቢያ፦ DeepSeek AI ምስሎችን በቀጥታ ማየት አይችልም። እባክዎ የመድኃኒቱን ስም በጽሁፍ ይጻፉልን።"
+            # OpenRouter ለፎቶ የሚሰራበት መንገድ
+            base64_image = base64.b64encode(image_bytes).decode('utf-8')
+            user_content = [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+            ]
         else:
             return "❌ ምንም መረጃ አልተላከም።"
         
-        messages = [
-            {"role": "system", "content": "አንተ የመድሃኒት ባለሙያ ነህ። መረጃህን በአማርኛ ስጥ።"},
-            {"role": "user", "content": user_content}
-        ]
-        
         headers = {
-            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-            "Content-Type": "application/json"
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://alnoor-pharmacy-bot.onrender.com",
+            "X-Title": "Al-Noor Pharmacy Bot"
         }
         
         payload = {
-            "model": DEEPSEEK_MODEL,
-            "messages": messages,
+            "model": OPENROUTER_MODEL,
+            "messages": [
+                {"role": "system", "content": "አንተ የመድሃኒት ባለሙያ ነህ። መረጃህን በአማርኛ ስጥ።"},
+                {"role": "user", "content": user_content}
+            ],
             "temperature": 0.7,
             "max_tokens": 1024
         }
         
-        response = requests.post(DEEPSEEK_API_URL, json=payload, headers=headers, timeout=30)
+        response = requests.post(OPENROUTER_API_URL, json=payload, headers=headers, timeout=60)
         
         if response.status_code != 200:
             error_detail = response.text
-            logging.error(f"DeepSeek API Error {response.status_code}: {error_detail}")
+            logging.error(f"OpenRouter API Error {response.status_code}: {error_detail}")
             
-            if "decommissioned" in error_detail:
-                return "⚠️ የሞዴሉ ስሪት ተቋርጧል። እባክዎ አስተዳዳሪውን ያግኙ።"
+            if "insufficient_quota" in error_detail:
+                return "⚠️ የነጻ ጥቅም ገደብ አልፏል። እባክዎ በኋላ ይሞክሩ ወይም ክሬዲት ይጨምሩ።"
             else:
-                return f"❌ የDeepSeek API ስህተት፦ {response.status_code}"
+                return f"❌ የOpenRouter API ስህተት፦ {response.status_code}"
         
         result = response.json()
         return result['choices'][0]['message']['content']
             
     except requests.exceptions.Timeout:
         return "⏱️ የጊዜ ገደብ አልፏል። እባክዎ እንደገና ይሞክሩ።"
-    except requests.exceptions.HTTPError as e:
-        return f"❌ የDeepSeek API ስህተት፦ {e.response.status_code}"
     except Exception as e:
-        logging.error(f"DeepSeek API error: {e}")
+        logging.error(f"OpenRouter API error: {e}")
         return f"❌ መረጃውን መተንተን አልተቻለም። {str(e)[:100]}"
 
 # ----------------- AI የመድኃኒት መረጃ ማብራሪያ SECTION -----------------
@@ -306,9 +310,9 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if msg.text == "🏠 ወደ ዋና ገጽ":
         return await start(update, context)
 
-    if not DEEPSEEK_API_KEY:
+    if not OPENROUTER_API_KEY:
         await msg.reply_text(
-            "⚠️ የ DeepSeek AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
+            "⚠️ የ AI አገልግሎቱ ለጊዜው አልተዋቀረም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         return ConversationHandler.END
@@ -331,14 +335,11 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if msg.photo:
             photo_file = await msg.photo[-1].get_file()
             image_bytes = await photo_file.download_as_bytearray()
-            await msg.reply_text(
-                "📷 ማሳሰቢያ፦ DeepSeek AI ምስሎችን በቀጥታ ማየት አይችልም። የመድኃኒቱን ስም በጽሁፍ ቢጽፉልን የተሻለ መረጃ ልንሰጥዎ እንችላለን።"
-            )
-            response_text = await analyze_with_deepseek(prompt, text=None, image_bytes=image_bytes)
+            response_text = await analyze_with_openrouter(prompt, text=None, image_bytes=image_bytes)
             
         elif msg.text:
             text = msg.text
-            response_text = await analyze_with_deepseek(prompt, text=text, image_bytes=None)
+            response_text = await analyze_with_openrouter(prompt, text=text, image_bytes=None)
         else:
             await msg.reply_text(
                 "❌ የላኩት ግብዓት ስላልገባኝ ድጋሚ ይሞክሩ።",
@@ -353,7 +354,7 @@ async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
     except Exception as e:
-        logging.error(f"DeepSeek error: {e}")
+        logging.error(f"OpenRouter error: {e}")
         await msg.reply_text(
             f"❌ መረጃውን መተንተን አልተቻለም።\n\n`{str(e)[:200]}`",
             parse_mode="Markdown",
