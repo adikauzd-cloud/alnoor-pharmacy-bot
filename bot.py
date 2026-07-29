@@ -1203,6 +1203,7 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
     
     customer_id, medicine_name, photo_file_id = order
     
+    # ✅ Store order info in context
     context.user_data["responding_order_id"] = order_id
     context.user_data["responding_customer_id"] = customer_id
     
@@ -1215,7 +1216,7 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
         f"✅ አለኝ ወይም ❌ የለኝም ብለው መመለስ ይችላሉ።"
     )
     
-    # If photo exists, show it with response options
+    # ✅ If photo exists, show it with response options
     if photo_file_id:
         try:
             await query.edit_message_text("📷 ፎቶውን እያየን ነው...")
@@ -1238,6 +1239,7 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=ReplyKeyboardMarkup([["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], resize_keyboard=True)
         )
     
+    # ✅ Return WAITING_FOR_PRICE to wait for price input
     return WAITING_FOR_PRICE
 
 async def show_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE):
