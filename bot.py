@@ -658,7 +658,7 @@ async def send_order_notification(context, pharmacy_chat_id, customer_id, medici
         f"💊 መድኃኒት: {medicine_name}\n"
         f"📅 የታዘዘበት ቀን: {order_time.strftime('%Y-%m-%d')}\n"
         f"🕐 የታዘዘበት ሰዓት: {order_time.strftime('%H:%M')}\n\n"
-        f"👤 ደንበኛ: {customer_id}\n"
+        f"📋 የደንበኛ መለያ: {customer_id}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"⚡ *እባክዎ በፍጥነት ምላሽ ይስጡ!*"
     )
@@ -666,7 +666,7 @@ async def send_order_notification(context, pharmacy_chat_id, customer_id, medici
     await send_telegram_notification(context, pharmacy_chat_id, message)
 
 # ==============================================================================
-# 8. ✅ SAVE PHARMACY REQUEST (የተሻሻለ)
+# 8. SAVE PHARMACY REQUEST
 # ==============================================================================
 
 def save_pharmacy_request(pharmacy_id, customer_id, medicine_name):
@@ -924,9 +924,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """📋 ለፋርማሲስቱ ሁሉንም የታዘዙ መድኃኒቶች ማሳየት"""
+    """📋 ለፋርማሲስቱ ሁሉንም የታዘዙ መድኃኒቶች ማሳየት (የደንበኛ መለያ ሳይታይ)"""
     
     pharmacy_chat_id = update.effective_user.id
+    user_id = update.effective_user.id
     
     # Check if this chat is registered as a pharmacy
     pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
@@ -937,6 +938,9 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         return
+    
+    # Check if user is admin
+    is_admin = (user_id == ADMIN_CHAT_ID)
     
     conn = None
     try:
@@ -1014,10 +1018,14 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status_emoji = "⏳" if status == 'pending' else "✅" if status == 'responded' else "📦"
         status_text = "ምላሽ የሚጠብቅ" if status == 'pending' else "መልስ ተሰጥቷል" if status == 'responded' else "ተጠናቅቋል"
         
+        # ✅ For pharmacy: show only medicine name, time, status (hide customer_id)
         text = f"{status_emoji} **{idx}. {medicine_name}**\n"
-        text += f"   👤 ደንበኛ: {customer_id}\n"
         text += f"   📅 {time_str}\n"
         text += f"   📊 {status_text}\n"
+        
+        # ✅ For admin: show customer_id
+        if is_admin:
+            text += f"   👤 ደንበኛ: {customer_id}\n"
         
         if status == 'pending':
             inline_keyboard = InlineKeyboardMarkup([
