@@ -1109,7 +1109,6 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text,
                 parse_mode="Markdown"
             )
-
 async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """💊 ለታዘዘ መድኃኒት መልስ ለመስጠት"""
     
@@ -1133,14 +1132,20 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
             order = cursor.fetchone()
         except Exception as e:
             logging.error(f"Error getting order: {e}")
-            await query.edit_message_text("❌ የትዕዛዝ መረጃ ማግኘት አልተቻለም።")
+            await query.edit_message_text(
+                "❌ የትዕዛዝ መረጃ ማግኘት አልተቻለም።",
+                reply_markup=None  # ✅ Fix: Add reply_markup=None
+            )
             return
         finally:
             if conn:
                 conn.close()
         
         if not order:
-            await query.edit_message_text("❌ ይህ ትዕዛዝ አልተገኘም።")
+            await query.edit_message_text(
+                "❌ ይህ ትዕዛዝ አልተገኘም።",
+                reply_markup=None  # ✅ Fix: Add reply_markup=None
+            )
             return
         
         customer_id, medicine_name, status = order
@@ -1149,7 +1154,8 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
         if status != 'pending':
             await query.edit_message_text(
                 f"⏳ ይህ ትዕዛዝ ቀድሞውኑ መልስ አግኝቷል (ሁኔታ: {status})።\n\n"
-                f"💡 መልስ መስጠት የሚችሉት ምላሽ ላልተሰጠ ትዕዛዝ ብቻ ነው።"
+                f"💡 መልስ መስጠት የሚችሉት ምላሽ ላልተሰጠ ትዕዛዝ ብቻ ነው።",
+                reply_markup=None  # ✅ Fix: Add reply_markup=None
             )
             return
         
@@ -1163,6 +1169,7 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
             ["🏠 ወደ ዋና ገጽ"]
         ]
         
+        # ✅ Use edit_message_text with reply_markup=None for the initial edit
         await query.edit_message_text(
             f"💊 **ለትዕዛዝ መልስ መስጠት**\n\n"
             f"📋 መድኃኒት: **{medicine_name}**\n"
@@ -1171,6 +1178,12 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
             f"ምሳሌ: 150 ብር, አለኝ, ከሰአት በኋላ ይምጡ\n\n"
             f"✅ 'አለኝ' ወይም ❌ 'የለኝም' ብለው መመለስ ይችላሉ።",
             parse_mode="Markdown",
+            reply_markup=None  # ✅ Fix: Remove inline keyboard from the message
+        )
+        
+        # ✅ Send a new message with the keyboard
+        await query.message.reply_text(
+            "👇 ከታች ያሉትን አዝራሮች ይጠቀሙ፦",
             reply_markup=ReplyKeyboardMarkup(price_keyboard, resize_keyboard=True)
         )
         
@@ -1178,7 +1191,11 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
         
     except Exception as e:
         logging.error(f"Error in respond_order_callback: {e}")
-        await query.edit_message_text(f"❌ ስህተት ተከስቷል። እባክዎ እንደገና ይሞክሩ።\n\n`{str(e)[:100]}`")
+        await query.edit_message_text(
+            f"❌ ስህተት ተከስቷል። እባክዎ እንደገና ይሞክሩ።\n\n`{str(e)[:100]}`",
+            parse_mode="Markdown",
+            reply_markup=None  # ✅ Fix: Add reply_markup=None
+        )
         return ConversationHandler.END
 
 async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
