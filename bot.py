@@ -1821,7 +1821,7 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
             # ✅ የደንበኛ መልእክት
             customer_message = (
                 f"✨ *ያዘዙት መድኃኒት ተገኘ!* ✨\n"
-                f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
+            f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
                 f"💊 *የመድኃኒቱ ስም*\n"
                 f"   ➜ {medicine_name}\n\n"
                 f"🏥 *የፋርማሲ ስም*\n"
@@ -1832,12 +1832,12 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
                 f"   ➜ {pharm_phone}\n\n"
                 f"🕒 *የስራ ሰዓት*\n"
                 f"   ➜ {pharm_hours}\n\n"
-                f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
+              f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
                 f"💰 *ዋጋ*\n"
                 f"   ➜ {price_details} ብር\n\n"
-                f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
-                f"📞 ለመግዛት ከላይ ባለው ስልክ ያግኙን\n"
-                f"💊 ፋርማሲ በአካል ሲሄዱ የሀኪም ማዘዣ እንዳይረሱ!"
+              f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
+                f"📞 ለመግዛት ከላይ ባለው የፋርማሲስቱ ስልክ ያግኙን\n"
+          
             )
             
             try:
@@ -1920,8 +1920,7 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
 
     # ✅ ለደንበኛ መልእክት (ከ "አለኝ" ቁልፍ)
     customer_message = (
-        f"✨ *ያዘዙት መድኃኒት ተገኘ!* ✨\n"
-        f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
+        f"✨ *ያዘዙት መድኃኒት ተገኘ!* ✨\n"    f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
         f"🏥 *የፋርማሲ ስም*\n"
         f"   ➜ {pharm_name}\n\n"
         f"📍 *አካባቢ*\n"
@@ -1930,12 +1929,11 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
         f"   ➜ {pharm_phone}\n\n"
         f"🕒 *የስራ ሰዓት*\n"
         f"   ➜ {pharm_hours}\n\n"
-        f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
+        f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
         f"💰 *ዋጋ*\n"
         f"   ➜ {price_details} ብር\n\n"
-        f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
-        f"📞 ለመግዛት ከላይ ባለው ስልክ ያግኙን\n"
-        f"💊 ፋርማሲ በአካል ሲሄዱ የሀኪም ማዘዣ እንዳይረሱ!"
+        f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
+        f"📞 ለመግዛት ከላይ ባለው የፋርማሲስት ስልክ ያግኙን\n"
     )
 
     await msg.reply_text(
