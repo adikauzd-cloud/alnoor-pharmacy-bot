@@ -1815,23 +1815,26 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
             if DATABASE_URL:
                 conn.commit()
             
-            # ✅ ሙሉ በአማርኛ የተዘጋጀ ፕሮፌሽናል መልእክት
+            # ✅ PREMIUM INVOICE STYLE - ዘመናዊ እና ግልጽ
             customer_message = (
-                f"╔════════════════════════════════════╗\n"
-                f"║          💊 ያዘዙት መድኃኒት ተገኘ          ║\n"
-                f"╚════════════════════════════════════╝\n\n"
-                f"🏥 የፋርማሲ ስም    │ {pharm_name}\n"
-                f"📍 አካባቢ              │ {pharm_loc}\n"
-                f"📞 ስልክ                │ {pharm_phone}\n"
-                f"🕒 የስራ ሰዓት        │ {pharm_hours}\n"
-                f"💰 ዋጋ                 │ {price_details} ብር\n"
-                f"🟢 ተገኝነት      │ ✅ አለ\n\n"
-                f"═══════════════════════════════════════\n"
-                f"✅ የተረጋገጠ ፋርማሲ\n"
-                f"⚡ ፈጣን ምላሽ\n"
-                f"🔒 አስተማማኝ መረጃ\n"
-                f"═══════════════════════════════════════\n"
-                f"🤖 ፋርማሲ ሲሄዱ የሀኪም ማዘዣ መያዝ እንዳይረሱ!"
+                f"✨ *ያዘዙት መድኃኒት ተገኘ!* ✨\n"
+                f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
+                f"💊 *የመድኃኒቱ ስም*\n"
+                f"   ➜ {medicine_name}\n\n"
+                f"🏥 *የፋርማሲ ስም*\n"
+                f"   ➜ {pharm_name}\n\n"
+                f"📍 *አካባቢ*\n"
+                f"   ➜ {pharm_loc}\n\n"
+                f"📞 *ስልክ*\n"
+                f"   ➜ {pharm_phone}\n\n"
+                f"🕒 *የስራ ሰዓት*\n"
+                f"   ➜ {pharm_hours}\n\n"
+                f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
+                f"💰 *ዋጋ*\n"
+                f"   ➜ {price_details} ብር\n\n"
+                f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
+                f"📞 ለመግዛት ከላይ ባለው ስልክ ያግኙን\n"
+                f" ፋርማሲ በአካል ሲሄዱ የሀኪም ማዘዣ እንዳይረሱ!"
             )
             
             try:
@@ -1867,6 +1870,90 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
         
         return ConversationHandler.END
     
+    # ============================================================
+    # ከ "✅ አለኝ" ቁልፍ የሚመጣ መደበኛ ምላሽ
+    # ============================================================
+    customer_id = context.chat_data.get("target_customer_id")
+    pharmacy_chat_id = msg.chat_id
+
+    if not customer_id:
+        await msg.reply_text(
+            "❌ የደንበኛ መለያ አልተገኘም።",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        return ConversationHandler.END
+
+    pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
+    pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
+    pharm_loc = pharm_info[1] if pharm_info else "ያልተጠቀሰ"
+    pharm_phone = pharm_info[2] if pharm_info else "ያልተጠቀሰ"
+    pharm_hours = pharm_info[3] if pharm_info and pharm_info[3] else "ያልተጠቀሰ"
+
+    pharmacy_internal_id = get_pharmacy_id_by_chat_id(pharmacy_chat_id)
+    if not pharmacy_internal_id:
+        await msg.reply_text("❌ የፋርማሲ መለያ አልተገኘም።")
+        return ConversationHandler.END
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"""
+            INSERT INTO pharmacy_responses (pharmacy_id, customer_id, medicine_name, price, status)
+            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 'responded')
+        """, (pharmacy_internal_id, customer_id, price_details[:50], price_details))
+        if DATABASE_URL:
+            conn.commit()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logging.error(f"ስህተት: {e}")
+        await msg.reply_text(f"❌ ስህተት: {str(e)[:100]}")
+        return ConversationHandler.END
+    finally:
+        if conn:
+            conn.close()
+
+    # ✅ PREMIUM INVOICE STYLE - ዘመናዊ እና ግልጽ (ከ "አለኝ" ቁልፍ)
+    customer_message = (
+        f"✨ *ያዘዙት መድኃኒት ተገኘ!* ✨\n"
+        f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
+        f"💊 የመድኃኒትቱ ስም*\n"
+        f"   ➜ {medicine_name if 'medicine_name' in locals() else 'ያልተገለጸ'}\n\n"
+        f"🏥 *የፋርማሲ ስም*\n"
+        f"   ➜ {pharm_name}\n\n"
+        f"📍 *አካባቢ*\n"
+        f"   ➜ {pharm_loc}\n\n"
+        f"📞 *ስልክ*\n"
+        f"   ➜ {pharm_phone}\n\n"
+        f"🕒 *የስራ ሰዓት*\n"
+        f"   ➜ {pharm_hours}\n\n"
+        f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
+        f"💰 *ዋጋ*\n"
+        f"   ➜ {price_details} ብር\n\n"
+        f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
+        f"📞 ለመግዛት ከላይ ባለው ስልክ ያግኙን\n"
+        f"ፋርማሲ በአካል ሲሄዱ የሀኪም ማዘዣ እንዳይረሱ!"
+    )
+
+    await msg.reply_text(
+        "✅ ዋጋው እና መረጃው ለደንበኛው በስኬት ተልኳል!",
+        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+    )
+
+    if customer_id:
+        try:
+            await context.bot.send_message(
+                chat_id=int(customer_id),
+                text=customer_message,
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
+            )
+        except Exception as e:
+            logging.error(f"ለደንበኛው {customer_id} መላክ አልተቻለም፦ {e}")
+
+    return ConversationHandler.END
     # ============================================================
     # ከ "✅ አለኝ" ቁልፍ የሚመጣ መደበኛ ምላሽ
     # ============================================================
