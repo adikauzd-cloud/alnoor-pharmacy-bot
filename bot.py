@@ -39,7 +39,7 @@ def run_flask():
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "0"))
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-LOGO_FILE_ID = os.environ.get("LOGO_FILE_ID", "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E")
+LOGO_FILE_ID = os.environ.get("LOGO_FILE_ID", "")
 
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN environment variable ውስጥ አልተገኘም።")
@@ -82,7 +82,6 @@ def init_db():
         cursor = conn.cursor()
         p = get_placeholder()
         
-        # Pharmacies table
         if DATABASE_URL:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS pharmacies (
@@ -114,7 +113,6 @@ def init_db():
                 )
             """)
         
-        # Search history table
         if DATABASE_URL:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS search_history (
@@ -136,7 +134,6 @@ def init_db():
                 )
             """)
         
-        # AI logs table
         if DATABASE_URL:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS ai_logs (
@@ -166,7 +163,6 @@ def init_db():
                 )
             """)
         
-        # Pharmacy responses table
         if DATABASE_URL:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS pharmacy_responses (
@@ -194,7 +190,6 @@ def init_db():
                 )
             """)
         
-        # Notifications table
         if DATABASE_URL:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS notifications (
@@ -237,7 +232,6 @@ def init_db():
 # ==============================================================================
 
 def get_pharmacy_id_by_chat_id(chat_id):
-    """Get internal pharmacy ID from chat_id"""
     conn = None
     try:
         conn = get_db_connection()
@@ -515,48 +509,7 @@ def get_ai_stats():
             conn.close()
 
 # ==============================================================================
-# 6. DISTANCE CALCULATION AND TOP PHARMACIES
-# ==============================================================================
-
-def calculate_distance(lat1, lon1, lat2, lon2):
-    R = 6371
-    try:
-        lat1_rad = math.radians(float(lat1))
-        lat2_rad = math.radians(float(lat2))
-        delta_lat = math.radians(float(lat2) - float(lat1))
-        delta_lon = math.radians(float(lon2) - float(lon1))
-        a = math.sin(delta_lat/2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon/2)**2
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-        return round(R * c, 2)
-    except:
-        return None
-
-def get_top_pharmacies(limit=10):
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        p = get_placeholder()
-        cursor.execute(f"""
-            SELECT p.id, p.name, p.location, p.phone, COALESCE(COUNT(pr.id), 0) as response_count
-            FROM pharmacies p
-            LEFT JOIN pharmacy_responses pr ON p.id = pr.pharmacy_id
-            WHERE p.is_verified = 1
-            GROUP BY p.id, p.name, p.location, p.phone
-            ORDER BY response_count DESC
-            LIMIT {p}
-        """, (limit,))
-        rows = cursor.fetchall()
-        return rows
-    except Exception as e:
-        logging.error(f"Get top pharmacies error: {e}")
-        return []
-    finally:
-        if conn:
-            conn.close()
-
-# ==============================================================================
-# 7. NOTIFICATION SYSTEM
+# 6. NOTIFICATION SYSTEM
 # ==============================================================================
 
 def save_notification(user_id, pharmacy_id, notification_type, message):
@@ -636,27 +589,13 @@ def get_unread_notification_count(user_id):
         if conn:
             conn.close()
 
-async def send_telegram_notification(context, user_id, message):
-    try:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=f"🔔 {message}",
-            parse_mode="Markdown"
-        )
-        return True
-    except Exception as e:
-        logging.error(f"Telegram notification error: {e}")
-        return False
-
 def save_pharmacy_request(pharmacy_chat_id, customer_id, medicine_name, photo_file_id=None):
-    """Save pharmacy request to database using chat_id"""
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         p = get_placeholder()
         
-        # Get the pharmacy ID from the database using chat_id
         cursor.execute(f"SELECT id FROM pharmacies WHERE chat_id = {p} AND is_verified = 1", (pharmacy_chat_id,))
         pharm_row = cursor.fetchone()
         
@@ -686,7 +625,6 @@ def save_pharmacy_request(pharmacy_chat_id, customer_id, medicine_name, photo_fi
             conn.close()
 
 def update_order_status(order_id, status, price=None):
-    """Update order status (pending, responded, completed)"""
     conn = None
     try:
         conn = get_db_connection()
@@ -711,7 +649,6 @@ def update_order_status(order_id, status, price=None):
             conn.close()
 
 def get_order_by_id(order_id):
-    """Get order details by ID"""
     conn = None
     try:
         conn = get_db_connection()
@@ -731,7 +668,7 @@ def get_order_by_id(order_id):
             conn.close()
 
 # ==============================================================================
-# 8. STATES & KEYBOARDS
+# 7. STATES & KEYBOARDS
 # ==============================================================================
 WAITING_FOR_SEARCH = 1
 WAITING_FOR_PRICE = 2
@@ -766,7 +703,7 @@ HOURS_KEYBOARD = [
 ]
 
 # ==============================================================================
-# 9. TRANSLATION FUNCTION
+# 8. TRANSLATION FUNCTION
 # ==============================================================================
 
 async def translate_to_amharic(english_text):
@@ -805,7 +742,7 @@ def clean_translation(text):
     return '\n'.join(unique_lines)
 
 # ==============================================================================
-# 10. AI HANDLER
+# 9. AI HANDLER
 # ==============================================================================
 
 import time
@@ -886,7 +823,7 @@ Include a disclaimer that this is for informational purposes only."""
         return f"❌ Error: {str(e)[:100]}"
 
 # ==============================================================================
-# 11. HANDLERS
+# 10. HANDLERS
 # ==============================================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -907,12 +844,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if update.message:
         try:
-            await update.message.reply_photo(
-                photo=LOGO_FILE_ID,
-                caption=welcome_text,
-                parse_mode="Markdown",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
-            )
+            if LOGO_FILE_ID:
+                await update.message.reply_photo(
+                    photo=LOGO_FILE_ID,
+                    caption=welcome_text,
+                    parse_mode="Markdown",
+                    reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
+                )
+            else:
+                await update.message.reply_text(
+                    welcome_text,
+                    parse_mode="Markdown",
+                    reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
+                )
         except Exception as e:
             logging.error(f"ፎቶ መጫን አልተቻለም፦ {e}")
             await update.message.reply_text(
@@ -923,13 +867,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """📋 ለፋርማሲስቱ የታዘዙ መድኃኒቶች ማሳየት (አዲሱ ከላይ)"""
-    
     pharmacy_chat_id = update.effective_user.id
     user_id = update.effective_user.id
     is_admin = (user_id == ADMIN_CHAT_ID)
     
-    # Check if this chat is registered as a pharmacy
     pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
     if not pharm_info:
         await update.message.reply_text(
@@ -945,7 +886,6 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor = conn.cursor()
         p = get_placeholder()
         
-        # Get pharmacy ID from chat_id
         cursor.execute(f"SELECT id FROM pharmacies WHERE chat_id = {p} AND is_verified = 1", (pharmacy_chat_id,))
         pharm_row = cursor.fetchone()
         
@@ -959,7 +899,6 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         pharmacy_db_id = pharm_row[0]
         
-        # ✅ Get all orders for this pharmacy - ORDER BY response_time DESC (አዲሱ ከላይ)
         cursor.execute(f"""
             SELECT id, customer_id, medicine_name, price, photo_file_id, response_time, status
             FROM pharmacy_responses 
@@ -990,12 +929,10 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if conn:
             conn.close()
     
-    # Count orders by status
     pending_count = len([o for o in all_orders if o[6] == 'pending'])
     responded_count = len([o for o in all_orders if o[6] == 'responded'])
     completed_count = len([o for o in all_orders if o[6] == 'completed'])
     
-    # Send summary
     summary_text = (
         f"📋 **የታዘዙ መድኃኒቶች**\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -1012,7 +949,6 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
     )
     
-    # ✅ Show each order (newest first)
     for idx, order in enumerate(all_orders, 1):
         order_id, customer_id, medicine_name, price, photo_file_id, response_time, status = order
         time_str = response_time.strftime('%Y-%m-%d %H:%M') if hasattr(response_time, 'strftime') else str(response_time)
@@ -1033,7 +969,6 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_admin:
             text += f"   👤 ደንበኛ: {customer_id}\n"
         
-        # ✅ Show respond button only for pending orders
         if status == 'pending':
             inline_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("💊 መልስ ስጥ", callback_data=f"respond_order_{order_id}")]
@@ -1060,27 +995,24 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
 async def view_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """📷 ከትዕዛዝ ጋር የተያያዘውን ፎቶ ማሳየት እና መልስ መስጫ ቁልፍ"""
-    
     query = update.callback_query
     await query.answer()
     
-    order_id = int(query.data.split("_")[2])
-    
-    order = get_order_by_id(order_id)
-    
-    if not order or not order[5]:  # photo_file_id is index 5
-        await query.edit_message_text("❌ ለዚህ ትዕዛዝ ምንም ፎቶ አልተገኘም።")
-        return
-    
-    photo_file_id, medicine_name = order[5], order[3]  # photo_file_id, medicine_name
-    
-    # Show photo with response buttons
-    inline_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💊 መልስ ስጥ", callback_data=f"respond_from_photo_{order_id}")]
-    ])
-    
     try:
+        order_id = int(query.data.split("_")[2])
+        order = get_order_by_id(order_id)
+        
+        if not order or not order[5]:
+            await query.edit_message_text("❌ ለዚህ ትዕዛዝ ምንም ፎቶ አልተገኘም።")
+            return
+        
+        photo_file_id = order[5]
+        medicine_name = order[3]
+        
+        inline_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💊 መልስ ስጥ", callback_data=f"respond_from_photo_{order_id}")]
+        ])
+        
         await query.edit_message_text(f"📷 **{medicine_name}** ፎቶ")
         await context.bot.send_photo(
             chat_id=update.effective_user.id,
@@ -1089,33 +1021,27 @@ async def view_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=inline_keyboard
         )
     except Exception as e:
-        logging.error(f"Error sending photo: {e}")
-        await query.edit_message_text("❌ ፎቶውን መላክ አልተቻለም።")
+        logging.error(f"Error in view_photo_callback: {e}")
+        await query.edit_message_text(f"❌ የሆነ ችግር ተፈጥሯል። እባክዎ እንደገና ይሞክሩ።")
 
 async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """💊 ለታዘዘ መድኃኒት መልስ ለመስጠት"""
-    
     query = update.callback_query
     await query.answer()
     
     try:
-        # Extract order_id from callback data
         order_id = int(query.data.split("_")[2])
-        logging.info(f"Processing respond_order for order_id: {order_id}")
+        logging.info(f"📞 Respond order callback - order_id: {order_id}")
         
-        # Get order details
         order = get_order_by_id(order_id)
         
         if not order:
             await query.edit_message_text("❌ ይህ ትዕዛዝ አልተገኘም።")
-            return
+            return ConversationHandler.END
         
-        # order structure: (id, pharmacy_id, customer_id, medicine_name, price, photo_file_id, response_time, status)
         customer_id = order[2]
         medicine_name = order[3]
         photo_file_id = order[5]
         
-        # Store in context for later use
         context.user_data["responding_order_id"] = order_id
         context.user_data["responding_customer_id"] = customer_id
         
@@ -1128,42 +1054,33 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
             f"✅ አለኝ ወይም ❌ የለኝም ብለው መመለስ ይችላሉ።"
         )
         
-        # If photo exists, show it with response options
+        reply_markup = ReplyKeyboardMarkup(
+            [["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], 
+            resize_keyboard=True
+        )
+        
         if photo_file_id:
             try:
-                # First delete the callback message
                 await query.message.delete()
-                
-                # Send photo with caption
                 await context.bot.send_photo(
                     chat_id=update.effective_user.id,
                     photo=photo_file_id,
                     caption=message,
                     parse_mode="Markdown",
-                    reply_markup=ReplyKeyboardMarkup(
-                        [["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], 
-                        resize_keyboard=True
-                    )
+                    reply_markup=reply_markup
                 )
             except Exception as e:
-                logging.error(f"Error sending photo with response: {e}")
-                # If photo fails, just send text
+                logging.error(f"Error sending photo: {e}")
                 await query.edit_message_text(
                     message,
                     parse_mode="Markdown",
-                    reply_markup=ReplyKeyboardMarkup(
-                        [["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], 
-                        resize_keyboard=True
-                    )
+                    reply_markup=reply_markup
                 )
         else:
             await query.edit_message_text(
                 message,
                 parse_mode="Markdown",
-                reply_markup=ReplyKeyboardMarkup(
-                    [["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], 
-                    resize_keyboard=True
-                )
+                reply_markup=reply_markup
             )
         
         return WAITING_FOR_PRICE
@@ -1174,20 +1091,18 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
         return ConversationHandler.END
 
 async def respond_from_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """📷 ከፎቶ ሲታይ መልስ ለመስጠት"""
-    
     query = update.callback_query
     await query.answer()
     
     try:
         order_id = int(query.data.split("_")[2])
-        logging.info(f"Processing respond_from_photo for order_id: {order_id}")
+        logging.info(f"📞 Respond from photo callback - order_id: {order_id}")
         
         order = get_order_by_id(order_id)
         
         if not order:
             await query.edit_message_text("❌ ይህ ትዕዛዝ አልተገኘም።")
-            return
+            return ConversationHandler.END
         
         customer_id = order[2]
         medicine_name = order[3]
@@ -1204,13 +1119,15 @@ async def respond_from_photo_callback(update: Update, context: ContextTypes.DEFA
             f"✅ አለኝ ወይም ❌ የለኝም ብለው መመለስ ይችላሉ።"
         )
         
+        reply_markup = ReplyKeyboardMarkup(
+            [["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], 
+            resize_keyboard=True
+        )
+        
         await query.edit_message_text(
             message,
             parse_mode="Markdown",
-            reply_markup=ReplyKeyboardMarkup(
-                [["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], 
-                resize_keyboard=True
-            )
+            reply_markup=reply_markup
         )
         
         return WAITING_FOR_PRICE
@@ -1220,34 +1137,514 @@ async def respond_from_photo_callback(update: Update, context: ContextTypes.DEFA
         await query.edit_message_text(f"❌ የሆነ ችግር ተፈጥሯል። እባክዎ እንደገና ይሞክሩ።")
         return ConversationHandler.END
 
-async def show_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """🔔 ማሳወቂያዎች ማሳየት (ለተጠቃሚዎች)"""
-    user_id = update.effective_user.id
-    notifications = get_notifications(user_id, 10)
+async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
     
-    if not notifications:
-        await update.message.reply_text(
-            "🔔 ምንም አዲስ ማሳወቂያ የለም።",
+    if not msg:
+        return ConversationHandler.END
+        
+    if msg.text == "🏠 ወደ ዋና ገጽ":
+        await start(update, context)
+        return ConversationHandler.END
+
+    price_details = msg.text
+    order_id = context.user_data.get("responding_order_id")
+    customer_id = context.user_data.get("responding_customer_id")
+    
+    logging.info(f"💰 Received price - order_id: {order_id}, customer_id: {customer_id}")
+    
+    if order_id and customer_id:
+        try:
+            success = update_order_status(order_id, 'responded', price_details)
+            
+            if success:
+                pharmacy_chat_id = update.effective_user.id
+                pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
+                pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
+                pharm_loc = pharm_info[1] if pharm_info else "ያልተጠቀሰ"
+                pharm_phone = pharm_info[2] if pharm_info else "ያልተጠቀሰ"
+                pharm_hours = pharm_info[3] if pharm_info and pharm_info[3] else "ያልተጠቀሰ"
+                
+                try:
+                    await context.bot.send_message(
+                        chat_id=int(customer_id),
+                        text=f"🎉 የመድኃኒት መረጃ ከ{pharm_name} ተገኘ!\n\n"
+                             f"🏥 ፋርማሲ፦ {pharm_name}\n"
+                             f"📍 አካባቢ፦ {pharm_loc}\n"
+                             f"📞 ስልክ፦ {pharm_phone}\n"
+                             f"🕒 የስራ ሰዓት፦ {pharm_hours}\n\n"
+                             f"💰 የዋጋ እና የዝርዝር መረጃ፦\n{price_details}",
+                        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+                    )
+                    
+                    await msg.reply_text(
+                        "✅ መልስዎ ለደንበኛው በስኬት ተልኳል!",
+                        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+                    )
+                except Exception as e:
+                    logging.error(f"Error sending to customer: {e}")
+                    await msg.reply_text(
+                        "✅ መልስዎ ተቀምጧል ነገር ግን ለደንበኛው መላክ አልተቻለም።",
+                        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+                    )
+            else:
+                await msg.reply_text(
+                    "❌ መልስዎን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ።",
+                    reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+                )
+            
+            context.user_data.pop("responding_order_id", None)
+            context.user_data.pop("responding_customer_id", None)
+            return ConversationHandler.END
+            
+        except Exception as e:
+            logging.error(f"Error in receive_price_details: {e}")
+            await msg.reply_text(
+                f"❌ የሆነ ችግር ተፈጥሯል። እባክዎ እንደገና ይሞክሩ።",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+            return ConversationHandler.END
+    
+    # Legacy flow
+    customer_id = context.user_data.get("responding_customer_id")
+    if customer_id:
+        try:
+            pharmacy_chat_id = msg.chat_id
+            pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
+            pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
+            pharm_loc = pharm_info[1] if pharm_info else "ያልተጠቀሰ"
+            pharm_phone = pharm_info[2] if pharm_info else "ያልተጠቀሰ"
+            pharm_hours = pharm_info[3] if pharm_info and pharm_info[3] else "ያልተጠቀሰ"
+            
+            await context.bot.send_message(
+                chat_id=int(customer_id),
+                text=f"🎉 የመድኃኒት መረጃ ከ{pharm_name} ተገኘ!\n\n"
+                     f"🏥 ፋርማሲ፦ {pharm_name}\n"
+                     f"📍 አካባቢ፦ {pharm_loc}\n"
+                     f"📞 ስልክ፦ {pharm_phone}\n"
+                     f"🕒 የስራ ሰዓት፦ {pharm_hours}\n\n"
+                     f"💰 የዋጋ እና የዝርዝር መረጃ፦\n{price_details}",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+            
+            await msg.reply_text(
+                "✅ መልስዎ ለደንበኛው በስኬት ተልኳል!",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+        except Exception as e:
+            logging.error(f"Error in legacy flow: {e}")
+            await msg.reply_text(
+                "❌ መልስዎን ማስቀመጥ አልተቻለም።",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+    
+    context.user_data.pop("responding_customer_id", None)
+    return ConversationHandler.END
+
+async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg:
+        return ConversationHandler.END
+
+    if msg.text:
+        menu_buttons = [
+            "🔍 መድኃኒት ፈልግ",
+            "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ",
+            "📍 አካባቢ ምረጥ",
+            "📋 የፋርማሲዎች ዝርዝር",
+            "🏥 ፋርማሲ መዝግብ",
+            "📋 የታዘዙ መድኃኒቶች",
+            "📞 እገዛ / ድጋፍ",
+            "📊 ስታቲስቲክስ",
+            "🏠 ወደ ዋና ገጽ"
+        ]
+        
+        if msg.text in menu_buttons:
+            if msg.text == "🔍 መድኃኒት ፈልግ":
+                return await prompt_search(update, context)
+            elif msg.text == "📋 የታዘዙ መድኃኒቶች":
+                return await show_orders(update, context)
+            elif msg.text == "📊 ስታቲስቲክስ":
+                return await stats_command(update, context)
+            else:
+                await start(update, context)
+                return ConversationHandler.END
+
+    user = update.effective_user
+    user_loc = context.user_data.get('user_location')
+    verified_pharmacies = get_verified_pharmacies_by_location(user_loc) if user_loc else []
+    if not verified_pharmacies:
+        verified_pharmacies = get_verified_pharmacies_by_location(None)
+
+    if not verified_pharmacies:
+        await msg.reply_text(
+            "⚠️ በአሁኑ ሰዓት ምንም የተረጋገጡ ፋርማሲዎች የሉም።\n\n"
+            "💡 እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        return ConversationHandler.END
+
+    photo_file_id = None
+    is_doc = False
+    medicine_name = msg.text if msg.text else "Prescription Photo"
+    order_time = datetime.now()
+
+    if msg.photo:
+        photo_file_id = msg.photo[-1].file_id
+    elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith('image/'):
+        photo_file_id = msg.document.file_id
+        is_doc = True
+    elif msg.text:
+        medicine_name = msg.text
+
+    loc_tag = f" (አካባቢ፦ {user_loc})" if user_loc else ""
+
+    sent_count = 0
+    if photo_file_id:
+        await msg.reply_text(
+            f"✅ የሐኪም ማዘዣ ፎቶዎ ተቀብለናል! ለ{len(verified_pharmacies)} ሕጋዊ ፋርማሲዎች ጥያቄው ተልኳል።{loc_tag}",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        
+        tasks = []
+        for chat_id in verified_pharmacies:
+            save_result = save_pharmacy_request(chat_id, user.id, medicine_name, photo_file_id)
+            if not save_result:
+                logging.error(f"Failed to save request for pharmacy chat_id: {chat_id}")
+                continue
+            
+            sent_count += 1
+            caption = f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ (በፎቶ)!**\n"
+            caption += f"👤 ከደንበኛ፡ {user.first_name}\n"
+            caption += f"📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n"
+            caption += f"📅 ቀን: {order_time.strftime('%Y-%m-%d')}\n"
+            caption += f"🕐 ሰዓት: {order_time.strftime('%H:%M')}\n\n"
+            caption += f"⚡ **እባክዎ በፍጥነት ምላሽ ይስጡ!**"
+            
+            order_id = None
+            conn = None
+            try:
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                p = get_placeholder()
+                cursor.execute(f"SELECT id FROM pharmacy_responses WHERE pharmacy_id = (SELECT id FROM pharmacies WHERE chat_id = {p}) AND customer_id = {p} ORDER BY id DESC LIMIT 1", (chat_id, user.id))
+                row = cursor.fetchone()
+                order_id = row[0] if row else None
+            except Exception as e:
+                logging.error(f"Error getting order ID: {e}")
+            finally:
+                if conn:
+                    conn.close()
+            
+            if order_id:
+                inline_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{order_id}_{user.id}"),
+                     InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{order_id}_{user.id}")]
+                ])
+            else:
+                inline_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{user.id}"),
+                     InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{user.id}")]
+                ])
+            
+            if is_doc:
+                tasks.append(context.bot.send_document(chat_id=chat_id, document=photo_file_id, caption=caption, reply_markup=inline_keyboard))
+            else:
+                tasks.append(context.bot.send_photo(chat_id=chat_id, photo=photo_file_id, caption=caption, reply_markup=inline_keyboard))
+        
+        if tasks:
+            await asyncio.gather(*tasks)
+            
+    elif msg.text:
+        med_name = msg.text
+        await msg.reply_text(
+            f"✅ የመድኃኒት ስም '{med_name}' ተቀብለናል! ለ{len(verified_pharmacies)} ሕጋዊ ፋርማሲዎች እየተላከ ነው...{loc_tag}",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        
+        tasks = []
+        for chat_id in verified_pharmacies:
+            save_result = save_pharmacy_request(chat_id, user.id, med_name)
+            if not save_result:
+                logging.error(f"Failed to save request for pharmacy chat_id: {chat_id}")
+                continue
+            
+            sent_count += 1
+            
+            order_id = None
+            conn = None
+            try:
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                p = get_placeholder()
+                cursor.execute(f"SELECT id FROM pharmacy_responses WHERE pharmacy_id = (SELECT id FROM pharmacies WHERE chat_id = {p}) AND customer_id = {p} ORDER BY id DESC LIMIT 1", (chat_id, user.id))
+                row = cursor.fetchone()
+                order_id = row[0] if row else None
+            except Exception as e:
+                logging.error(f"Error getting order ID: {e}")
+            finally:
+                if conn:
+                    conn.close()
+            
+            if order_id:
+                inline_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{order_id}_{user.id}"),
+                     InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{order_id}_{user.id}")]
+                ])
+            else:
+                inline_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{user.id}"),
+                     InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{user.id}")]
+                ])
+            
+            tasks.append(context.bot.send_message(
+                chat_id=chat_id,
+                text=f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ!**\n"
+                     f"💊 የተፈለገው መድኃኒት፡ **{med_name}**\n"
+                     f"👤 ከደንበኛ፡ {user.first_name}\n"
+                     f"📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n"
+                     f"📅 ቀን: {order_time.strftime('%Y-%m-%d')}\n"
+                     f"🕐 ሰዓት: {order_time.strftime('%H:%M')}\n\n"
+                     f"⚡ **እባክዎ በፍጥነት ምላሽ ይስጡ!**",
+                reply_markup=inline_keyboard
+            ))
+        
+        if tasks:
+            await asyncio.gather(*tasks)
+
+    if sent_count == 0:
+        await msg.reply_text(
+            "❌ ጥያቄዎን ለማስተላለፍ አልተቻለም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+
+    return ConversationHandler.END
+
+async def handle_pharmacy_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    
+    parts = data.split("_")
+    action = parts[0]
+    
+    try:
+        if len(parts) >= 3 and parts[1].isdigit():
+            order_id = int(parts[1])
+            customer_id = parts[2]
+            context.user_data["responding_order_id"] = order_id
+            context.user_data["responding_customer_id"] = customer_id
+        elif len(parts) == 2:
+            customer_id = parts[1]
+            context.user_data["responding_customer_id"] = customer_id
+            context.user_data["responding_order_id"] = None
+        else:
+            await query.edit_message_text("❌ የትዕዛዝ መረጃ አልተገኘም።")
+            return ConversationHandler.END
+
+        if action == "available":
+            msg_text = (
+                "✅ 'መድኃኒቱ አለኝ' የሚለው ምላሽዎ ተመዝግቧል!\n\n"
+                "እባክዎ የመድኃቶቹን ዋጋ እና ተጨማሪ መረጃ ያስገቡ።"
+            )
+            try:
+                await query.edit_message_caption(caption=msg_text)
+            except Exception:
+                await query.edit_message_text(text=msg_text)
+            return WAITING_FOR_PRICE
+        elif action == "not_available":
+            try:
+                await query.edit_message_caption(caption="❌ 'የለኝም' የሚለው ምላሽዎ ተመዝግቧል።")
+            except Exception:
+                await query.edit_message_text(text="❌ 'የለኝም' የሚለው ምላሽዎ ተመዝግቧል።")
+            return ConversationHandler.END
+    except Exception as e:
+        logging.error(f"Error in handle_pharmacy_response: {e}")
+        await query.edit_message_text("❌ የሆነ ችግር ተፈጥሯል። እባክዎ እንደገና ይሞክሩ።")
+        return ConversationHandler.END
+
+# ==============================================================================
+# 11. OTHER HANDLERS (stats, location, pharmacy registration, etc.)
+# ==============================================================================
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    is_admin = (user_id == ADMIN_CHAT_ID)
+    
+    ai_stats = get_ai_stats()
+    total_pharms, verified_pharms, pending_pharms = get_bot_statistics()
+    top_meds = get_top_medicines(5)
+    top_pharms = get_top_pharmacies(5)
+    search_history = get_user_search_history(user_id, 5)
+    unread_count = get_unread_notification_count(user_id)
+    
+    text = f"📊 **የስርዓት ስታቲስቲክስ**\n\n"
+    text += f"🔔 ያልተነበቡ ማሳወቂያዎች: {unread_count}\n\n"
+    text += f"🤖 **AI አጠቃቀም**\n"
+    text += f"• ጠቅላላ ጥያቄዎች: {ai_stats['total']}\n"
+    text += f"• ስኬታማ: {ai_stats['successful']}\n"
+    if is_admin:
+        text += f"• ስህተቶች: {ai_stats['errors']}\n"
+    text += f"• አማካይ ምላሽ ጊዜ: {ai_stats['avg_time']} ሰከንድ\n\n"
+    text += f"🏥 **ፋርማሲዎች**\n"
+    text += f"• ጠቅላላ: {total_pharms}\n"
+    text += f"• የተረጋገጡ: {verified_pharms}\n"
+    if is_admin:
+        text += f"• ማረጋገጫ የሚጠብቁ: {pending_pharms}\n"
+    text += "\n"
+    
+    if top_meds:
+        text += f"🏆 **ከፍተኛ መድኃኒቶች**\n"
+        for idx, (med, count) in enumerate(top_meds, 1):
+            text += f"• {idx}. {med} ({count} ጊዜ)\n"
+        text += "\n"
+    
+    if top_pharms:
+        text += f"🏆 **ከፍተኛ ፋርማሲዎች**\n"
+        for idx, (pid, name, loc, phone, count) in enumerate(top_pharms, 1):
+            text += f"• {idx}. {name} ({count} ምላሾች)\n"
+        text += "\n"
+    
+    if search_history:
+        text += f"📝 **የቅርብ ጊዜ ፍለጋዎች**\n"
+        for med, date in search_history:
+            date_str = date.strftime('%Y-%m-%d %H:%M') if isinstance(date, datetime) else str(date)
+            text += f"• {med} - {date_str}\n"
+    
+    await update.message.reply_text(
+        text, 
+        parse_mode="Markdown", 
+        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+    )
+
+async def admin_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ ይቅርታ! ይህንን ትዕዛዝ መጠቀም የሚችለው አድሚኑ ብቻ ነው።")
+        return
+
+    total, verified, pending = get_bot_statistics()
+    ai_stats = get_ai_stats()
+    
+    stats_text = (
+        f"📊 **የአድሚን ስታቲስቲክስ**\n\n"
+        f"🤖 **AI አጠቃቀም**\n"
+        f"• ጠቅላላ ጥያቄዎች: {ai_stats['total']}\n"
+        f"• ስኬታማ: {ai_stats['successful']}\n"
+        f"• ስህተቶች: {ai_stats['errors']}\n"
+        f"• አማካይ ምላሽ ጊዜ: {ai_stats['avg_time']} ሰከንድ\n\n"
+        f"🏥 **ፋርማሲዎች**\n"
+        f"• ጠቅላላ የተመዘገቡ: {total}\n"
+        f"• የተረጋገጡ (ሕጋዊ): {verified}\n"
+        f"• ማረጋገጫ የሚጠብቁ (Pending): {pending}\n\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"🤖 *አል-ኑር መድኃኒት አፋላጊ ሲስተም*"
+    )
+    await update.message.reply_text(
+        stats_text, 
+        parse_mode="Markdown", 
+        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+    )
+
+async def prompt_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_loc = context.user_data.get("user_location")
+    loc_text = f"📍 የተመረጠው አካባቢ፦ {user_loc}\n\n" if user_loc else "📍 *(አካባቢ አልመረጡም)*\n\n"
+    await update.message.reply_text(
+        f"{loc_text}"
+        f"እባክዎ የሚፈልጉትን መድኃኒት፦\n"
+        f"1. በጽሑፍ የመድኃኒቱን ስም ይጻፉልን፡ ወይም\n"
+        f"2. የሐኪም ማዘዣውን (Prescription) ፎቶ አንስተው ይላኩልን።",
+        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
+    )
+    return WAITING_FOR_SEARCH
+
+async def select_location_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    current_loc = context.user_data.get("user_location", "አልተመረጠም")
+    await update.message.reply_text(
+        f"📍 **የአካባቢ መምረጫ**\n\n"
+        f"አሁን የተመረጠው አካባቢ፦ {current_loc}\n\n"
+        f"እባክዎ የሚገኙበትን ክፍለ ከተማ ከታች ካሉት አዝራሮች ይምረጡ ወይም ይጻፉልን፦",
+        reply_markup=ReplyKeyboardMarkup(LOCATION_KEYBOARD, resize_keyboard=True),
+    )
+    return WAITING_FOR_LOCATION_SET
+
+async def save_user_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if msg.text == "🏠 ወደ ዋና ገጽ":
+        return await start(update, context)
+    selected_loc = msg.text
+    context.user_data["user_location"] = selected_loc
+    await msg.reply_text(
+        f"✅ አካባቢዎ በስኬት ወደ '{selected_loc}' ተቀይሯል!",
+        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
+    )
+    return ConversationHandler.END
+
+async def list_pharmacies(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        msg = query.message
+    else:
+        msg = update.message
+    
+    if not msg:
+        return
+
+    try:
+        pharmacies = get_all_verified_pharmacies()
+    except Exception as e:
+        logging.error(f"Error getting pharmacies: {e}")
+        await msg.reply_text(
+            "❌ የፋርማሲ ዝርዝር ማግኘት አልተቻለም። እባክዎ በኋላ ይሞክሩ።",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         return
+
+    if not pharmacies:
+        await msg.reply_text(
+            "ℹ️ በአሁኑ ሰዓት የተረጋገጡ ሕጋዊ ፋርማሲዎች አልተገኙም።",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        return
+
+    try:
+        top_pharms = get_top_pharmacies(100)
+        pharm_rank = {pid: idx+1 for idx, (pid, _, _, _, _) in enumerate(top_pharms)}
+    except:
+        pharm_rank = {}
     
-    text = "🔔 **ማሳወቂያዎች**\n\n"
-    for notif in notifications:
-        notif_id, notif_type, message, is_read, created_at = notif
-        read_emoji = "✅" if is_read else "🆕"
-        time_str = created_at.strftime('%Y-%m-%d %H:%M') if hasattr(created_at, 'strftime') else str(created_at)
-        text += f"{read_emoji} {message}\n"
-        text += f"   📅 {time_str}\n"
-        text += "────────────────────\n"
-        if not is_read:
-            mark_notification_read(notif_id)
+    text = "🏥 **የተመዘገቡ ሕጋዊ ፋርማሲዎች ዝርዝር**\n\n"
     
-    await update.message.reply_text(
-        text,
-        parse_mode="Markdown",
-        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-    )
+    for pharmacy in pharmacies:
+        try:
+            if len(pharmacy) >= 5:
+                pid, name, loc, phone, hours = pharmacy[:5]
+            else:
+                continue
+            
+            rank = pharm_rank.get(pid, '—')
+            rank_emoji = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else f"#{rank}" if rank != '—' else ""
+            
+            text += f"{rank_emoji} **{name}**\n"
+            text += f"   📍 አካባቢ፦ {loc}\n"
+            text += f"   📞 ስልክ፦ {phone}\n"
+            text += f"   🕒 የስራ ሰዓት፦ {hours}\n"
+            text += "────────────────────\n"
+            
+            if len(text) > 3500:
+                await msg.reply_text(text, parse_mode="Markdown")
+                text = ""
+        except Exception as e:
+            logging.error(f"Error processing pharmacy: {e}")
+            continue
+
+    if text:
+        await msg.reply_text(
+            text, 
+            parse_mode="Markdown", 
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
 
 async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -1259,61 +1656,6 @@ async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup([["🏠 ወደ ዋና ገጽ"]], resize_keyboard=True)
     )
     return WAITING_FOR_MED_INFO
-
-async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == "go_home":
-        await query.message.delete()
-        await start(update, context)
-        return
-    
-    english_text = context.user_data.get("last_english_response")
-    if not english_text:
-        await query.edit_message_text("⚠️ No English text to translate.")
-        return
-
-    await query.edit_message_text("⏳ ወደ አማርኛ እየተረጎመ ነው... እባክዎ ይጠብቁ...")
-
-    try:
-        amharic_text = await translate_to_amharic(english_text)
-        if amharic_text:
-            amharic_text = clean_translation(amharic_text)
-            inline_keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📝 Show English", callback_data="show_english")],
-                [InlineKeyboardButton("🏠 ወደ ዋና ገጽ", callback_data="go_home")]
-            ])
-            await query.edit_message_text(
-                f"💡 የመድኃኒት መረጃ (አማርኛ)\n\n{amharic_text}\n\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"⚠️ ይህ መረጃ ለግንዛቤ ብቻ ነው። ሁልጊዜ የሐኪምዎን መመሪያ ይከተሉ።",
-                reply_markup=inline_keyboard
-            )
-            context.user_data["last_amharic_response"] = amharic_text
-        else:
-            await query.edit_message_text("❌ ትርጉሙ አልተሳካም። እባክዎ እንደገና ይሞክሩ።")
-    except Exception as e:
-        logging.error(f"Translation error: {e}")
-        await query.edit_message_text(f"❌ የትርጉም ስህተት: {str(e)[:200]}")
-
-async def show_english_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    english_text = context.user_data.get("last_english_response")
-    if not english_text:
-        await query.edit_message_text("⚠️ No English text found.")
-        return
-    inline_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📝 Translate to Amharic", callback_data="translate_amharic")],
-        [InlineKeyboardButton("🏠 ወደ ዋና ገጽ", callback_data="go_home")]
-    ])
-    await query.edit_message_text(
-        f"💡 Medical Information (English)\n\n{english_text}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚠️ This is for informational purposes only. Always consult your doctor.",
-        reply_markup=inline_keyboard
-    )
 
 async def analyze_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
@@ -1407,586 +1749,60 @@ Medication: {text}"""
 
     return ConversationHandler.END
 
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """📊 ስታቲስቲክስ ለሁሉም ተጠቃሚዎች"""
-    user_id = update.effective_user.id
-    is_admin = (user_id == ADMIN_CHAT_ID)
-    
-    ai_stats = get_ai_stats()
-    total_pharms, verified_pharms, pending_pharms = get_bot_statistics()
-    top_meds = get_top_medicines(5)
-    top_pharms = get_top_pharmacies(5)
-    search_history = get_user_search_history(user_id, 5)
-    unread_count = get_unread_notification_count(user_id)
-    
-    text = f"📊 **የስርዓት ስታቲስቲክስ**\n\n"
-    text += f"🔔 ያልተነበቡ ማሳወቂያዎች: {unread_count}\n\n"
-    text += f"🤖 **AI አጠቃቀም**\n"
-    text += f"• ጠቅላላ ጥያቄዎች: {ai_stats['total']}\n"
-    text += f"• ስኬታማ: {ai_stats['successful']}\n"
-    if is_admin:
-        text += f"• ስህተቶች: {ai_stats['errors']}\n"
-    text += f"• አማካይ ምላሽ ጊዜ: {ai_stats['avg_time']} ሰከንድ\n\n"
-    text += f"🏥 **ፋርማሲዎች**\n"
-    text += f"• ጠቅላላ: {total_pharms}\n"
-    text += f"• የተረጋገጡ: {verified_pharms}\n"
-    if is_admin:
-        text += f"• ማረጋገጫ የሚጠብቁ: {pending_pharms}\n"
-    text += "\n"
-    
-    if top_meds:
-        text += f"🏆 **ከፍተኛ መድኃኒቶች**\n"
-        for idx, (med, count) in enumerate(top_meds, 1):
-            text += f"• {idx}. {med} ({count} ጊዜ)\n"
-        text += "\n"
-    
-    if top_pharms:
-        text += f"🏆 **ከፍተኛ ፋርማሲዎች**\n"
-        for idx, (pid, name, loc, phone, count) in enumerate(top_pharms, 1):
-            text += f"• {idx}. {name} ({count} ምላሾች)\n"
-        text += "\n"
-    
-    if search_history:
-        text += f"📝 **የቅርብ ጊዜ ፍለጋዎች**\n"
-        for med, date in search_history:
-            date_str = date.strftime('%Y-%m-%d %H:%M') if isinstance(date, datetime) else str(date)
-            text += f"• {med} - {date_str}\n"
-    
-    await update.message.reply_text(
-        text, 
-        parse_mode="Markdown", 
-        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-    )
-
-async def admin_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """📊 ሙሉ ስታቲስቲክስ ለአድሚን ብቻ"""
-    user_id = update.effective_user.id
-    if user_id != ADMIN_CHAT_ID:
-        await update.message.reply_text("⛔ ይቅርታ! ይህንን ትዕዛዝ መጠቀም የሚችለው አድሚኑ ብቻ ነው።")
-        return
-
-    total, verified, pending = get_bot_statistics()
-    ai_stats = get_ai_stats()
-    
-    stats_text = (
-        f"📊 **የአድሚን ስታቲስቲክስ**\n\n"
-        f"🤖 **AI አጠቃቀም**\n"
-        f"• ጠቅላላ ጥያቄዎች: {ai_stats['total']}\n"
-        f"• ስኬታማ: {ai_stats['successful']}\n"
-        f"• ስህተቶች: {ai_stats['errors']}\n"
-        f"• አማካይ ምላሽ ጊዜ: {ai_stats['avg_time']} ሰከንድ\n\n"
-        f"🏥 **ፋርማሲዎች**\n"
-        f"• ጠቅላላ የተመዘገቡ: {total}\n"
-        f"• የተረጋገጡ (ሕጋዊ): {verified}\n"
-        f"• ማረጋገጫ የሚጠብቁ (Pending): {pending}\n\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"🤖 *አል-ኑር መድኃኒት አፋላጊ ሲስተም*"
-    )
-    await update.message.reply_text(
-        stats_text, 
-        parse_mode="Markdown", 
-        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-    )
-
-async def list_pharmacies(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """📋 የፋርማሲዎች ዝርዝር ከደረጃ ጋር"""
-    
-    if update.callback_query:
-        query = update.callback_query
-        await query.answer()
-        msg = query.message
-    else:
-        msg = update.message
-    
-    if not msg:
-        return
-
-    try:
-        pharmacies = get_all_verified_pharmacies()
-    except Exception as e:
-        logging.error(f"Error getting pharmacies: {e}")
-        await msg.reply_text(
-            "❌ የፋርማሲ ዝርዝር ማግኘት አልተቻለም። እባክዎ በኋላ ይሞክሩ።",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
-        return
-
-    if not pharmacies:
-        await msg.reply_text(
-            "ℹ️ በአሁኑ ሰዓት የተረጋገጡ ሕጋዊ ፋርማሲዎች አልተገኙም።",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
-        return
-
-    try:
-        top_pharms = get_top_pharmacies(100)
-        pharm_rank = {pid: idx+1 for idx, (pid, _, _, _, _) in enumerate(top_pharms)}
-    except:
-        pharm_rank = {}
-    
-    text = "🏥 **የተመዘገቡ ሕጋዊ ፋርማሲዎች ዝርዝር**\n\n"
-    
-    for pharmacy in pharmacies:
-        try:
-            if len(pharmacy) >= 5:
-                pid, name, loc, phone, hours = pharmacy[:5]
-            else:
-                continue
-            
-            rank = pharm_rank.get(pid, '—')
-            rank_emoji = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else f"#{rank}" if rank != '—' else ""
-            
-            text += f"{rank_emoji} **{name}**\n"
-            text += f"   📍 አካባቢ፦ {loc}\n"
-            text += f"   📞 ስልክ፦ {phone}\n"
-            text += f"   🕒 የስራ ሰዓት፦ {hours}\n"
-            text += "────────────────────\n"
-            
-            if len(text) > 3500:
-                await msg.reply_text(text, parse_mode="Markdown")
-                text = ""
-        except Exception as e:
-            logging.error(f"Error processing pharmacy: {e}")
-            continue
-
-    if text:
-        await msg.reply_text(
-            text, 
-            parse_mode="Markdown", 
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
-
-async def select_location_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    current_loc = context.user_data.get("user_location", "አልተመረጠም")
-    await update.message.reply_text(
-        f"📍 **የአካባቢ መምረጫ**\n\n"
-        f"አሁን የተመረጠው አካባቢ፦ {current_loc}\n\n"
-        f"እባክዎ የሚገኙበትን ክፍለ ከተማ ከታች ካሉት አዝራሮች ይምረጡ ወይም ይጻፉልን፦",
-        reply_markup=ReplyKeyboardMarkup(LOCATION_KEYBOARD, resize_keyboard=True),
-    )
-    return WAITING_FOR_LOCATION_SET
-
-async def save_user_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    if msg.text == "🏠 ወደ ዋና ገጽ":
-        return await start(update, context)
-    selected_loc = msg.text
-    context.user_data["user_location"] = selected_loc
-    await msg.reply_text(
-        f"✅ አካባቢዎ በስኬት ወደ '{selected_loc}' ተቀይሯል!",
-        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
-    )
-    return ConversationHandler.END
-
-async def prompt_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_loc = context.user_data.get("user_location")
-    loc_text = f"📍 የተመረጠው አካባቢ፦ {user_loc}\n\n" if user_loc else "📍 *(አካባቢ አልመረጡም)*\n\n"
-    await update.message.reply_text(
-        f"{loc_text}"
-        f"እባክዎ የሚፈልጉትን መድኃኒት፦\n"
-        f"1. በጽሑፍ የመድኃኒቱን ስም ይጻፉልን፡ ወይም\n"
-        f"2. የሐኪም ማዘዣውን (Prescription) ፎቶ አንስተው ይላኩልን።",
-        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
-    )
-    return WAITING_FOR_SEARCH
-
-async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    if not msg:
-        return ConversationHandler.END
-
-    # Check for menu buttons first
-    if msg.text:
-        menu_buttons = [
-            "🔍 መድኃኒት ፈልግ",
-            "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ",
-            "📍 አካባቢ ምረጥ",
-            "📋 የፋርማሲዎች ዝርዝር",
-            "🏥 ፋርማሲ መዝግብ",
-            "📋 የታዘዙ መድኃኒቶች",
-            "📞 እገዛ / ድጋፍ",
-            "📊 ስታቲስቲክስ",
-            "🏠 ወደ ዋና ገጽ"
-        ]
-        
-        if msg.text in menu_buttons:
-            if msg.text == "🔍 መድኃኒት ፈልግ":
-                return await prompt_search(update, context)
-            elif msg.text == "📋 የታዘዙ መድኃኒቶች":
-                return await show_orders(update, context)
-            else:
-                await start(update, context)
-                return ConversationHandler.END
-
-    user = update.effective_user
-    user_loc = context.user_data.get('user_location')
-    verified_pharmacies = get_verified_pharmacies_by_location(user_loc) if user_loc else []
-    if not verified_pharmacies:
-        verified_pharmacies = get_verified_pharmacies_by_location(None)
-
-    # If no pharmacies, send to admin
-    if not verified_pharmacies:
-        await msg.reply_text(
-            "⚠️ በአሁኑ ሰዓት ምንም የተረጋገጡ ፋርማሲዎች የሉም።\n\n"
-            "💡 እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
-        return ConversationHandler.END
-
-    photo_file_id = None
-    is_doc = False
-    medicine_name = msg.text if msg.text else "Prescription Photo"
-    order_time = datetime.now()
-
-    # Check if it's a photo
-    if msg.photo:
-        photo_file_id = msg.photo[-1].file_id
-    elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith('image/'):
-        photo_file_id = msg.document.file_id
-        is_doc = True
-    elif msg.text:
-        medicine_name = msg.text
-
-    loc_tag = f" (አካባቢ፦ {user_loc})" if user_loc else ""
-
-    # Send notification to all pharmacies concurrently
-    sent_count = 0
-    if photo_file_id:
-        await msg.reply_text(
-            f"✅ የሐኪም ማዘዣ ፎቶዎ ተቀብለናል! ለ{len(verified_pharmacies)} ሕጋዊ ፋርማሲዎች ጥያቄው ተልኳል።{loc_tag}",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
-        
-        # Send messages concurrently
-        tasks = []
-        for chat_id in verified_pharmacies:
-            # Save request in database
-            save_result = save_pharmacy_request(chat_id, user.id, medicine_name, photo_file_id)
-            if not save_result:
-                logging.error(f"Failed to save request for pharmacy chat_id: {chat_id}")
-                continue
-            
-            sent_count += 1
-            caption = f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ (በፎቶ)!**\n"
-            caption += f"👤 ከደንበኛ፡ {user.first_name}\n"
-            caption += f"📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n"
-            caption += f"📅 ቀን: {order_time.strftime('%Y-%m-%d')}\n"
-            caption += f"🕐 ሰዓት: {order_time.strftime('%H:%M')}\n\n"
-            caption += f"⚡ **እባክዎ በፍጥነት ምላሽ ይስጡ!**"
-            
-            # Get order ID for callback
-            order_id = None
-            conn = None
-            try:
-                conn = get_db_connection()
-                cursor = conn.cursor()
-                p = get_placeholder()
-                cursor.execute(f"SELECT id FROM pharmacy_responses WHERE pharmacy_id = (SELECT id FROM pharmacies WHERE chat_id = {p}) AND customer_id = {p} ORDER BY id DESC LIMIT 1", (chat_id, user.id))
-                row = cursor.fetchone()
-                order_id = row[0] if row else None
-            except Exception as e:
-                logging.error(f"Error getting order ID: {e}")
-            finally:
-                if conn:
-                    conn.close()
-            
-            # Create inline keyboard with order ID
-            if order_id:
-                inline_keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{order_id}_{user.id}"),
-                     InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{order_id}_{user.id}")]
-                ])
-            else:
-                inline_keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{user.id}"),
-                     InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{user.id}")]
-                ])
-            
-            if is_doc:
-                tasks.append(context.bot.send_document(chat_id=chat_id, document=photo_file_id, caption=caption, reply_markup=inline_keyboard))
-            else:
-                tasks.append(context.bot.send_photo(chat_id=chat_id, photo=photo_file_id, caption=caption, reply_markup=inline_keyboard))
-        
-        # Execute all send operations concurrently
-        if tasks:
-            await asyncio.gather(*tasks)
-            
-    elif msg.text:
-        med_name = msg.text
-        await msg.reply_text(
-            f"✅ የመድኃኒት ስም '{med_name}' ተቀብለናል! ለ{len(verified_pharmacies)} ሕጋዊ ፋርማሲዎች እየተላከ ነው...{loc_tag}",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
-        
-        tasks = []
-        for chat_id in verified_pharmacies:
-            # Save request in database
-            save_result = save_pharmacy_request(chat_id, user.id, med_name)
-            if not save_result:
-                logging.error(f"Failed to save request for pharmacy chat_id: {chat_id}")
-                continue
-            
-            sent_count += 1
-            
-            # Get order ID for callback
-            order_id = None
-            conn = None
-            try:
-                conn = get_db_connection()
-                cursor = conn.cursor()
-                p = get_placeholder()
-                cursor.execute(f"SELECT id FROM pharmacy_responses WHERE pharmacy_id = (SELECT id FROM pharmacies WHERE chat_id = {p}) AND customer_id = {p} ORDER BY id DESC LIMIT 1", (chat_id, user.id))
-                row = cursor.fetchone()
-                order_id = row[0] if row else None
-            except Exception as e:
-                logging.error(f"Error getting order ID: {e}")
-            finally:
-                if conn:
-                    conn.close()
-            
-            # Create inline keyboard with order ID
-            if order_id:
-                inline_keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{order_id}_{user.id}"),
-                     InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{order_id}_{user.id}")]
-                ])
-            else:
-                inline_keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{user.id}"),
-                     InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{user.id}")]
-                ])
-            
-            tasks.append(context.bot.send_message(
-                chat_id=chat_id,
-                text=f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ!**\n"
-                     f"💊 የተፈለገው መድኃኒት፡ **{med_name}**\n"
-                     f"👤 ከደንበኛ፡ {user.first_name}\n"
-                     f"📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n"
-                     f"📅 ቀን: {order_time.strftime('%Y-%m-%d')}\n"
-                     f"🕐 ሰዓት: {order_time.strftime('%H:%M')}\n\n"
-                     f"⚡ **እባክዎ በፍጥነት ምላሽ ይስጡ!**",
-                reply_markup=inline_keyboard
-            ))
-        
-        # Execute all send operations concurrently
-        if tasks:
-            await asyncio.gather(*tasks)
-
-    # If no notifications were sent, inform user
-    if sent_count == 0:
-        await msg.reply_text(
-            "❌ ጥያቄዎን ለማስተላለፍ አልተቻለም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
-
-    return ConversationHandler.END
-
-async def handle_pharmacy_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle pharmacy response via callback (available/not available)"""
+async def translate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
     
-    # Parse callback data
-    parts = data.split("_")
-    action = parts[0]
-    
-    # Check if we have order_id
-    if len(parts) >= 3 and parts[1].isdigit():
-        order_id = int(parts[1])
-        customer_id = parts[2]
-        context.user_data["responding_order_id"] = order_id
-        context.user_data["responding_customer_id"] = customer_id
-    elif len(parts) == 2:
-        # Legacy format without order_id
-        customer_id = parts[1]
-        context.user_data["responding_customer_id"] = customer_id
-        context.user_data["responding_order_id"] = None
-    else:
-        await query.edit_message_text("❌ የትዕዛዝ መረጃ አልተገኘም።")
-        return
-
-    if action == "available":
-        msg_text = (
-            "✅ 'መድኃኒቱ አለኝ' የሚለው ምላሽዎ ተመዝግቧል!\n\n"
-            "እባክዎ የመድኃቶቹን ዋጋ እና ተጨማሪ መረጃ ያስገቡ።"
-        )
-        try:
-            await query.edit_message_caption(caption=msg_text)
-        except Exception:
-            await query.edit_message_text(text=msg_text)
-        return WAITING_FOR_PRICE
-    elif action == "not_available":
-        try:
-            await query.edit_message_caption(caption="❌ 'የለኝም' የሚለው ምላሽዎ ተመዝግቧል።")
-        except Exception:
-            await query.edit_message_text(text="❌ 'የለኝም' የሚለው ምላሽዎ ተመዝግቧል።")
-        return ConversationHandler.END
-
-async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receive price details from pharmacy"""
-    msg = update.message
-    
-    if not msg:
-        return ConversationHandler.END
-        
-    if msg.text == "🏠 ወደ ዋና ገጽ":
+    if query.data == "go_home":
+        await query.message.delete()
         await start(update, context)
-        return ConversationHandler.END
+        return
+    
+    english_text = context.user_data.get("last_english_response")
+    if not english_text:
+        await query.edit_message_text("⚠️ No English text to translate.")
+        return
 
-    price_details = msg.text
-    
-    # Check if this is a response to an order
-    order_id = context.user_data.get("responding_order_id")
-    customer_id = context.user_data.get("responding_customer_id")
-    
-    logging.info(f"Received price details - order_id: {order_id}, customer_id: {customer_id}")
-    
-    if order_id and customer_id:
-        try:
-            # Update the specific order
-            success = update_order_status(order_id, 'responded', price_details)
-            
-            if success:
-                # Get pharmacy info
-                pharmacy_chat_id = update.effective_user.id
-                pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
-                pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
-                pharm_loc = pharm_info[1] if pharm_info else "ያልተጠቀሰ"
-                pharm_phone = pharm_info[2] if pharm_info else "ያልተጠቀሰ"
-                pharm_hours = pharm_info[3] if pharm_info and pharm_info[3] else "ያልተጠቀሰ"
-                
-                # Send response to customer
-                try:
-                    await context.bot.send_message(
-                        chat_id=int(customer_id),
-                        text=f"🎉 የመድኃኒት መረጃ ከ{pharm_name} ተገኘ!\n\n"
-                             f"🏥 ፋርማሲ፦ {pharm_name}\n"
-                             f"📍 አካባቢ፦ {pharm_loc}\n"
-                             f"📞 ስልክ፦ {pharm_phone}\n"
-                             f"🕒 የስራ ሰዓት፦ {pharm_hours}\n\n"
-                             f"💰 የዋጋ እና የዝርዝር መረጃ፦\n{price_details}",
-                        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-                    )
-                    
-                    await msg.reply_text(
-                        "✅ መልስዎ ለደንበኛው በስኬት ተልኳል!\n\n"
-                        "📋 ይህ ትዕዛዝ አሁን 'መልስ ተሰጥቷል' በሚለው ሁኔታ ላይ ነው።",
-                        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-                    )
-                except Exception as e:
-                    logging.error(f"Error sending to customer: {e}")
-                    await msg.reply_text(
-                        "✅ መልስዎ ተቀምጧል ነገር ግን ለደንበኛው መላክ አልተቻለም። አድሚኑን ያግኙ።",
-                        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-                    )
-            else:
-                await msg.reply_text(
-                    "❌ መልስዎን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ።",
-                    reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-                )
-            
-            # Clear context
-            context.user_data.pop("responding_order_id", None)
-            context.user_data.pop("responding_customer_id", None)
-            
-            return ConversationHandler.END
-            
-        except Exception as e:
-            logging.error(f"Error in receive_price_details: {e}")
-            await msg.reply_text(
-                f"❌ የሆነ ችግር ተፈጥሯል። እባክዎ እንደገና ይሞክሩ።",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-            return ConversationHandler.END
-    
-    # If no order_id (legacy flow)
-    customer_id = context.user_data.get("responding_customer_id")
-    
-    if customer_id:
-        try:
-            pharmacy_chat_id = msg.chat_id
-            pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
-            pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
-            pharm_loc = pharm_info[1] if pharm_info else "ያልተጠቀሰ"
-            pharm_phone = pharm_info[2] if pharm_info else "ያልተጠቀሰ"
-            pharm_hours = pharm_info[3] if pharm_info and pharm_info[3] else "ያልተጠቀሰ"
-            
-            await context.bot.send_message(
-                chat_id=int(customer_id),
-                text=f"🎉 የመድኃኒት መረጃ ከ{pharm_name} ተገኘ!\n\n"
-                     f"🏥 ፋርማሲ፦ {pharm_name}\n"
-                     f"📍 አካባቢ፦ {pharm_loc}\n"
-                     f"📞 ስልክ፦ {pharm_phone}\n"
-                     f"🕒 የስራ ሰዓት፦ {pharm_hours}\n\n"
-                     f"💰 የዋጋ እና የዝርዝር መረጃ፦\n{price_details}",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-            
-            await msg.reply_text(
-                "✅ መልስዎ ለደንበኛው በስኬት ተልኳል!",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-        except Exception as e:
-            logging.error(f"Error in legacy flow: {e}")
-            await msg.reply_text(
-                "❌ መልስዎን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ።",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-    
-    context.user_data.pop("responding_customer_id", None)
-    return ConversationHandler.END
-    # If no order_id, this is from the old flow - create new response
-    customer_id = context.user_data.get("responding_customer_id")
-    pharmacy_chat_id = msg.chat_id
+    await query.edit_message_text("⏳ ወደ አማርኛ እየተረጎመ ነው... እባክዎ ይጠብቁ...")
 
-    pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
-    pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
-    pharm_loc = pharm_info[1] if pharm_info else "ያልተጠቀሰ"
-    pharm_phone = pharm_info[2] if pharm_info else "ያልተጠቀሰ"
-    pharm_hours = pharm_info[3] if pharm_info and pharm_info[3] else "ያልተጠቀሰ"
-
-    if customer_id:
-        try:
-            await context.bot.send_message(
-                chat_id=int(customer_id),
-                text=f"🎉 የመድኃኒት መረጃ ከ{pharm_name} ተገኘ!\n\n"
-                     f"🏥 ፋርማሲ፦ {pharm_name}\n"
-                     f"📍 አካባቢ፦ {pharm_loc}\n"
-                     f"📞 ስልክ፦ {pharm_phone}\n"
-                     f"🕒 የስራ ሰዓት፦ {pharm_hours}\n\n"
-                     f"💰 የዋጋ እና የዝርዝር መረጃ፦\n{price_details}",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
+    try:
+        amharic_text = await translate_to_amharic(english_text)
+        if amharic_text:
+            amharic_text = clean_translation(amharic_text)
+            inline_keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📝 Show English", callback_data="show_english")],
+                [InlineKeyboardButton("🏠 ወደ ዋና ገጽ", callback_data="go_home")]
+            ])
+            await query.edit_message_text(
+                f"💡 የመድኃኒት መረጃ (አማርኛ)\n\n{amharic_text}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"⚠️ ይህ መረጃ ለግንዛቤ ብቻ ነው። ሁልጊዜ የሐኪምዎን መመሪያ ይከተሉ።",
+                reply_markup=inline_keyboard
             )
-            await msg.reply_text("✅ ዋጋው እና መረጃው ለደንበኛው በስኬት ተልኳል!", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
-        except Exception as e:
-            logging.error(f"ለደንበኛው {customer_id} መላክ አልተቻለም፦ {e}")
-            await msg.reply_text("❌ መልስዎን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ።")
+            context.user_data["last_amharic_response"] = amharic_text
+        else:
+            await query.edit_message_text("❌ ትርጉሙ አልተሳካም። እባክዎ እንደገና ይሞክሩ።")
+    except Exception as e:
+        logging.error(f"Translation error: {e}")
+        await query.edit_message_text(f"❌ የትርጉም ስህተት: {str(e)[:200]}")
 
-    context.user_data.pop("responding_customer_id", None)
-    return ConversationHandler.END
-
-async def handle_admin_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_english_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
-    if data.startswith("verify_"):
-        pharmacy_id = int(data.split("_")[1])
-        verify_pharmacy_db(pharmacy_id)
-        pharm_info = get_pharmacy_info_by_id(pharmacy_id)
-        pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
-        pharm_chat_id = pharm_info[3] if pharm_info else None
-
-        try:
-            await query.edit_message_caption(caption=f"✅ '{pharm_name}' በስኬት ተረጋግጧል! (ID: {pharmacy_id})")
-        except Exception:
-            await query.edit_message_text(text=f"✅ '{pharm_name}' በስኬት ተረጋግጧል! (ID: {pharmacy_id})")
-
-        if pharm_chat_id:
-            try:
-                await context.bot.send_message(chat_id=pharm_chat_id, text=f"🎉 እንኳን ደስ አለዎት!\n\nየፋርማሲዎት ({pharm_name}) ምዝገባ በአድሚኑ ተረጋግጧል።")
-            except Exception as e:
-                logging.error(f"ለፋርማሲው ማሳወቂያ መላክ አልተቻለም፦ {e}")
+    english_text = context.user_data.get("last_english_response")
+    if not english_text:
+        await query.edit_message_text("⚠️ No English text found.")
+        return
+    inline_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📝 Translate to Amharic", callback_data="translate_amharic")],
+        [InlineKeyboardButton("🏠 ወደ ዋና ገጽ", callback_data="go_home")]
+    ])
+    await query.edit_message_text(
+        f"💡 Medical Information (English)\n\n{english_text}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚠️ This is for informational purposes only. Always consult your doctor.",
+        reply_markup=inline_keyboard
+    )
 
 async def start_pharmacy_reg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -2126,6 +1942,28 @@ async def reg_get_license(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
+async def handle_admin_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data.startswith("verify_"):
+        pharmacy_id = int(data.split("_")[1])
+        verify_pharmacy_db(pharmacy_id)
+        pharm_info = get_pharmacy_info_by_id(pharmacy_id)
+        pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
+        pharm_chat_id = pharm_info[3] if pharm_info else None
+
+        try:
+            await query.edit_message_caption(caption=f"✅ '{pharm_name}' በስኬት ተረጋግጧል! (ID: {pharmacy_id})")
+        except Exception:
+            await query.edit_message_text(text=f"✅ '{pharm_name}' በስኬት ተረጋግጧል! (ID: {pharmacy_id})")
+
+        if pharm_chat_id:
+            try:
+                await context.bot.send_message(chat_id=pharm_chat_id, text=f"🎉 እንኳን ደስ አለዎት!\n\nየፋርማሲዎት ({pharm_name}) ምዝገባ በአድሚኑ ተረጋግጧል።")
+            except Exception as e:
+                logging.error(f"ለፋርማሲው ማሳወቂያ መላክ አልተቻለም፦ {e}")
+
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📞 **አል-ኑር መድኃኒት አፋላጊ - የደንበኞች ድጋፍ**\n\n"
@@ -2136,7 +1974,6 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_unmatched(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle unmatched messages and guide user to menu"""
     await update.message.reply_text(
         "❌ ይህንን መልእክት አልገባኝም።\n\n"
         "💡 እባክዎ ከታች ካሉት አዝራሮች ይምረጡ፦",
@@ -2146,7 +1983,6 @@ async def handle_unmatched(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler_func(update: object, context: ContextTypes.DEFAULT_TYPE):
     logging.error(msg="Exception while handling an update:", exc_info=context.error)
     
-    # Try to send error message to user
     if update and hasattr(update, 'effective_message') and update.effective_message:
         try:
             await update.effective_message.reply_text(
@@ -2215,7 +2051,6 @@ def main():
         fallbacks=[CommandHandler("start", start), MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)],
     )
 
-    # Photo view callback
     app.add_handler(CallbackQueryHandler(view_photo_callback, pattern="^view_photo_"))
 
     app.add_handler(CommandHandler("start", start))
@@ -2235,8 +2070,6 @@ def main():
     app.add_handler(pharmacy_conv)
 
     app.add_handler(MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start))
-    
-    # Fallback for unmatched messages
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unmatched))
 
     app.add_error_handler(error_handler_func)
