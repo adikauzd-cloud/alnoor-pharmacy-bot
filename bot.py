@@ -168,12 +168,12 @@ def init_db():
                 )
             """)
         
-        # Pharmacy responses table
+        # Pharmacy responses table with BIGINT for pharmacy_id
         if DATABASE_URL:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS pharmacy_responses (
                     id SERIAL PRIMARY KEY,
-                    pharmacy_id INTEGER NOT NULL,
+                    pharmacy_id BIGINT NOT NULL,
                     customer_id BIGINT NOT NULL,
                     medicine_name TEXT NOT NULL,
                     price TEXT,
@@ -350,7 +350,7 @@ def get_verified_pharmacies_by_location(location=None):
         else:
             cursor.execute("SELECT chat_id FROM pharmacies WHERE is_verified = 1")
         rows = cursor.fetchall()
-        return list(set([r[0] for r in rows]))
+        return [int(r[0]) for r in rows]
     except Exception as e:
         logging.error(f"Get verified pharmacies by location error: {e}")
         return []
@@ -666,20 +666,40 @@ async def send_order_notification(context, pharmacy_chat_id, customer_id, medici
     await send_telegram_notification(context, pharmacy_chat_id, message)
 
 # ==============================================================================
-# 8. ✅ SAVE PHARMACY REQUEST
+# 8. ✅ SAVE PHARMACY REQUEST (የተሻሻለ)
 # ==============================================================================
 
 def save_pharmacy_request(pharmacy_id, customer_id, medicine_name):
-    """Save pharmacy request to database"""
+    """Save pharmacy request to database with proper error handling"""
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"""
-            INSERT INTO pharmacy_responses (pharmacy_id, customer_id, medicine_name, price, status)
-            VALUES ({placeholder}, {placeholder}, {placeholder}, NULL, 'pending')
-        """, (pharmacy_id, customer_id, medicine_name))
+        
+        # Convert to int
+        try:
+            pharmacy_id = int(pharmacy_id)
+            customer_id = int(customer_id)
+        except Exception as e:
+            logging.error(f"Conversion error: {e}")
+            return False
+        
+        # Try with status column
+        try:
+            placeholder = "%s" if DATABASE_URL else "?"
+            cursor.execute(f"""
+                INSERT INTO pharmacy_responses (pharmacy_id, customer_id, medicine_name, price, status)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, NULL, 'pending')
+            """, (pharmacy_id, customer_id, medicine_name))
+        except Exception as e:
+            logging.warning(f"Status column may not exist: {e}")
+            # Try without status column
+            placeholder = "%s" if DATABASE_URL else "?"
+            cursor.execute(f"""
+                INSERT INTO pharmacy_responses (pharmacy_id, customer_id, medicine_name, price)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, NULL)
+            """, (pharmacy_id, customer_id, medicine_name))
+        
         if DATABASE_URL:
             conn.commit()
         logging.info(f"✅ Request saved: pharmacy={pharmacy_id}, customer={customer_id}, medicine={medicine_name}")
@@ -904,11 +924,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """📋 ለፋርማሲስቱ ሁሉንም የታዘዙ መድኃኒቶች ማሳየት (pending, responded, completed)"""
+    """📋 ለፋርማሲስቱ ሁሉንም የታዘዙ መድኃኒቶች ማሳየት"""
     
     pharmacy_chat_id = update.effective_user.id
     
-    # ✅ Check if this chat is registered as a pharmacy
+    # Check if this chat is registered as a pharmacy
     pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
     if not pharm_info:
         await update.message.reply_text(
@@ -923,6 +943,13 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = get_db_connection()
         cursor = conn.cursor()
         placeholder = "%s" if DATABASE_URL else "?"
+        
+        # Check if any orders exist at all
+        cursor.execute("SELECT COUNT(*) FROM pharmacy_responses")
+        total_count = cursor.fetchone()[0]
+        logging.info(f"Total orders in database: {total_count}")
+        
+        # Get orders for this pharmacy
         cursor.execute(f"""
             SELECT id, customer_id, medicine_name, price, response_time, status
             FROM pharmacy_responses 
@@ -930,22 +957,40 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ORDER BY response_time DESC
         """, (pharmacy_chat_id,))
         all_orders = cursor.fetchall()
+        logging.info(f"Orders for pharmacy {pharmacy_chat_id}: {len(all_orders)}")
+        
+        if not all_orders:
+            # Check if pharmacy is verified
+            cursor.execute("SELECT is_verified FROM pharmacies WHERE chat_id = %s", (pharmacy_chat_id,))
+            is_verified_row = cursor.fetchone()
+            is_verified = is_verified_row[0] if is_verified_row else 0
+            
+            debug_text = "📋 **የታዘዙ መድኃኒቶች**\n\n"
+            debug_text += "🔍 ምንም የታዘዙ መድኃኒቶች አልተገኙም።\n\n"
+            debug_text += f"📊 በዳታቤዝ ውስጥ ጠቅላላ ትዕዛዞች: {total_count}\n"
+            debug_text += f"🏥 የፋርማሲ ሁኔታ: {'✅ የተረጋገጠ' if is_verified == 1 else '⏳ ያልተረጋገጠ'}\n\n"
+            debug_text += "💡 መድኃኒት ሲፈልጉ ደንበኞች እዚህ ይታያሉ።"
+            
+            await update.message.reply_text(
+                debug_text,
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+            return
+        
     except Exception as e:
         logging.error(f"Error getting orders: {e}")
-        all_orders = []
+        await update.message.reply_text(
+            f"❌ የታዘዙ መድኃኒቶችን ማግኘት አልተቻለም።\n\n`{str(e)[:200]}`",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        return
     finally:
         if conn:
             conn.close()
     
-    if not all_orders:
-        await update.message.reply_text(
-            "📋 እስካሁን ምንም የታዘዙ መድኃኒቶች የሉም።\n\n"
-            "💡 ደንበኞች መድኃኒት ሲፈልጉ እዚህ ይታያሉ።",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
-        return
-    
-    # Count by status
+    # Show orders
     pending_count = len([o for o in all_orders if o[5] == 'pending'])
     responded_count = len([o for o in all_orders if o[5] == 'responded'])
     completed_count = len([o for o in all_orders if o[5] == 'completed'])
@@ -957,7 +1002,7 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⏳ ምላሽ የሚጠብቁ: {pending_count}\n"
         f"✅ መልስ የተሰጠ: {responded_count}\n"
         f"📦 የተጠናቀቀ: {completed_count}\n\n"
-        f"💡 ለመድኃኒት መልስ ለመስጠት ከታች ያለውን ቁልፍ ይጫኑ።",
+        f"💡 ለመድኃኒት መልስ ለመስጠት '💊 መልስ ስጥ' የሚለውን ይጫኑ።",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
     )
@@ -966,7 +1011,6 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         order_id, customer_id, medicine_name, price, response_time, status = order
         time_str = response_time.strftime('%Y-%m-%d %H:%M') if hasattr(response_time, 'strftime') else str(response_time)
         
-        # Status emoji
         status_emoji = "⏳" if status == 'pending' else "✅" if status == 'responded' else "📦"
         status_text = "ምላሽ የሚጠብቅ" if status == 'pending' else "መልስ ተሰጥቷል" if status == 'responded' else "ተጠናቅቋል"
         
@@ -975,7 +1019,6 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"   📅 {time_str}\n"
         text += f"   📊 {status_text}\n"
         
-        # Only show respond button for pending orders
         if status == 'pending':
             inline_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("💊 መልስ ስጥ", callback_data=f"respond_order_{order_id}")]
@@ -1430,12 +1473,21 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
     if not verified_pharmacies:
         verified_pharmacies = get_verified_pharmacies_by_location(None)
 
+    # If no pharmacies, send to admin
+    if not verified_pharmacies:
+        await msg.reply_text(
+            "⚠️ በአሁኑ ሰዓት ምንም የተረጋገጡ ፋርማሲዎች የሉም።\n\n"
+            "💡 እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        return ConversationHandler.END
+
     keyboard = [[
         InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{user.id}"),
         InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{user.id}")
     ]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    target_chats = verified_pharmacies if verified_pharmacies else [msg.chat_id]
+    target_chats = verified_pharmacies
 
     photo_file_id = msg.photo[-1].file_id if msg.photo else (msg.document.file_id if msg.document else None)
     is_doc = True if msg.document else False
@@ -1450,8 +1502,10 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
         )
         for chat_id in target_chats:
             try:
-                # ✅ Save to pharmacy_responses for each pharmacy
-                save_pharmacy_request(chat_id, user.id, medicine_name)
+                pharmacy_id = int(chat_id)
+                save_result = save_pharmacy_request(pharmacy_id, user.id, medicine_name)
+                if not save_result:
+                    logging.error(f"Failed to save request for pharmacy {pharmacy_id}")
                 
                 await send_order_notification(context, chat_id, user.id, "Prescription Photo", order_time)
                 caption = f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ (በፎቶ)!**\n"
@@ -1465,7 +1519,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
                 else:
                     await context.bot.send_photo(chat_id=chat_id, photo=photo_file_id, caption=caption, reply_markup=reply_markup)
             except Exception as e:
-                logging.error(f"Pharmacy notify error: {e}")
+                logging.error(f"Pharmacy notify error for {chat_id}: {e}")
     elif msg.text:
         med_name = msg.text
         await msg.reply_text(
@@ -1474,8 +1528,10 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
         )
         for chat_id in target_chats:
             try:
-                # ✅ Save to pharmacy_responses for each pharmacy
-                save_pharmacy_request(chat_id, user.id, med_name)
+                pharmacy_id = int(chat_id)
+                save_result = save_pharmacy_request(pharmacy_id, user.id, med_name)
+                if not save_result:
+                    logging.error(f"Failed to save request for pharmacy {pharmacy_id}")
                 
                 await send_order_notification(context, chat_id, user.id, med_name, order_time)
                 await context.bot.send_message(
@@ -1490,7 +1546,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
                     reply_markup=reply_markup
                 )
             except Exception as e:
-                logging.error(f"Pharmacy notify error: {e}")
+                logging.error(f"Pharmacy notify error for {chat_id}: {e}")
 
     return ConversationHandler.END
 
@@ -1536,7 +1592,7 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
             cursor = conn.cursor()
             placeholder = "%s" if DATABASE_URL else "?"
             
-            # ✅ Update order with price and status
+            # Update order with price and status
             cursor.execute(f"""
                 UPDATE pharmacy_responses 
                 SET price = {placeholder}, status = 'responded'
@@ -1545,7 +1601,7 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
             if DATABASE_URL:
                 conn.commit()
             
-            # ✅ Send response to customer
+            # Send response to customer
             await context.bot.send_message(
                 chat_id=int(customer_id),
                 text=f"🎉 የመድኃኒት መረጃ ተገኘ!\n\n"
