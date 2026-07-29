@@ -6,6 +6,7 @@ import requests
 import json
 import base64
 import math
+import asyncio
 from datetime import datetime, timedelta
 from flask import Flask
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
@@ -38,11 +39,13 @@ def run_flask():
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "0"))
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
+LOGO_FILE_ID = os.environ.get("LOGO_FILE_ID", "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E")
 
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN environment variable ውስጥ አልተገኘም።")
 
-LOGO_FILE_ID = "AgACAgQAAxkBAAEszTBqZGhpfKNE12Y948HvU4JhQHfZrQAC0g1rG4xKIFPy4FmrrNxjRAEAAwIAA3gAAz0E"
+if ADMIN_CHAT_ID == 0:
+    raise RuntimeError("❌ ADMIN_CHAT_ID environment variable ውስጥ አልተገኘም።")
 
 # ==============================================================================
 # 🤖 OpenRouter AI Configuration
@@ -59,6 +62,9 @@ logging.basicConfig(
 # 2. DATABASE CONNECTION & INITIALIZATION
 # ==============================================================================
 
+def get_placeholder():
+    return "%s" if DATABASE_URL else "?"
+
 def get_db_connection():
     if DATABASE_URL:
         db_url = DATABASE_URL.replace("postgres://", "postgresql://", 1) if DATABASE_URL.startswith("postgres://") else DATABASE_URL
@@ -74,6 +80,7 @@ def init_db():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        p = get_placeholder()
         
         # Pharmacies table
         if DATABASE_URL:
@@ -86,7 +93,9 @@ def init_db():
                     phone TEXT NOT NULL,
                     operating_hours TEXT DEFAULT 'ያልተጠቀሰ',
                     license_photo TEXT,
-                    is_verified INTEGER DEFAULT 0
+                    is_verified INTEGER DEFAULT 0,
+                    latitude REAL,
+                    longitude REAL
                 )
             """)
         else:
@@ -99,22 +108,11 @@ def init_db():
                     phone TEXT NOT NULL,
                     operating_hours TEXT DEFAULT 'ያልተጠቀሰ',
                     license_photo TEXT,
-                    is_verified INTEGER DEFAULT 0
+                    is_verified INTEGER DEFAULT 0,
+                    latitude REAL,
+                    longitude REAL
                 )
             """)
-        
-        # Add latitude and longitude columns if they don't exist
-        try:
-            cursor.execute("ALTER TABLE pharmacies ADD COLUMN latitude REAL")
-            logging.info("✅ latitude column added")
-        except Exception as e:
-            logging.info(f"latitude column already exists: {e}")
-        
-        try:
-            cursor.execute("ALTER TABLE pharmacies ADD COLUMN longitude REAL")
-            logging.info("✅ longitude column added")
-        except Exception as e:
-            logging.info(f"longitude column already exists: {e}")
         
         # Search history table
         if DATABASE_URL:
@@ -168,7 +166,7 @@ def init_db():
                 )
             """)
         
-        # Pharmacy responses table with BIGINT for pharmacy_id
+        # Pharmacy responses table
         if DATABASE_URL:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS pharmacy_responses (
@@ -195,19 +193,6 @@ def init_db():
                     status TEXT DEFAULT 'pending'
                 )
             """)
-        
-        # Add columns if they don't exist
-        try:
-            cursor.execute("ALTER TABLE pharmacy_responses ADD COLUMN status TEXT DEFAULT 'pending'")
-            logging.info("✅ status column added")
-        except Exception as e:
-            logging.info(f"status column already exists: {e}")
-        
-        try:
-            cursor.execute("ALTER TABLE pharmacy_responses ADD COLUMN photo_file_id TEXT")
-            logging.info("✅ photo_file_id column added")
-        except Exception as e:
-            logging.info(f"photo_file_id column already exists: {e}")
         
         # Notifications table
         if DATABASE_URL:
@@ -251,21 +236,39 @@ def init_db():
 # 3. DATABASE HELPER FUNCTIONS
 # ==============================================================================
 
+def get_pharmacy_id_by_chat_id(chat_id):
+    """Get internal pharmacy ID from chat_id"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        p = get_placeholder()
+        cursor.execute(f"SELECT id FROM pharmacies WHERE chat_id = {p} AND is_verified = 1", (chat_id,))
+        row = cursor.fetchone()
+        return row[0] if row else None
+    except Exception as e:
+        logging.error(f"Get pharmacy ID error: {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
+
 def register_pharmacy_db(chat_id, name, location, phone, operating_hours, license_photo, lat=None, lon=None):
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        p = get_placeholder()
         
         try:
             if DATABASE_URL:
-                cursor.execute("""
+                cursor.execute(f"""
                     INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified, latitude, longitude)
-                    VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s) RETURNING id
+                    VALUES ({p}, {p}, {p}, {p}, {p}, {p}, 0, {p}, {p}) RETURNING id
                 """, (chat_id, name, location, phone, operating_hours, license_photo, lat, lon))
                 pharmacy_id = cursor.fetchone()[0]
             else:
-                cursor.execute("""
+                cursor.execute(f"""
                     INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified, latitude, longitude)
                     VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
                 """, (chat_id, name, location, phone, operating_hours, license_photo, lat, lon))
@@ -273,13 +276,13 @@ def register_pharmacy_db(chat_id, name, location, phone, operating_hours, licens
         except Exception as e:
             logging.warning(f"Inserting without latitude/longitude: {e}")
             if DATABASE_URL:
-                cursor.execute("""
+                cursor.execute(f"""
                     INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified)
-                    VALUES (%s, %s, %s, %s, %s, %s, 0) RETURNING id
+                    VALUES ({p}, {p}, {p}, {p}, {p}, {p}, 0) RETURNING id
                 """, (chat_id, name, location, phone, operating_hours, license_photo))
                 pharmacy_id = cursor.fetchone()[0]
             else:
-                cursor.execute("""
+                cursor.execute(f"""
                     INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified)
                     VALUES (?, ?, ?, ?, ?, ?, 0)
                 """, (chat_id, name, location, phone, operating_hours, license_photo))
@@ -302,8 +305,8 @@ def verify_pharmacy_db(pharmacy_id):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"UPDATE pharmacies SET is_verified = 1 WHERE id = {placeholder}", (pharmacy_id,))
+        p = get_placeholder()
+        cursor.execute(f"UPDATE pharmacies SET is_verified = 1 WHERE id = {p}", (pharmacy_id,))
         if DATABASE_URL:
             conn.commit()
     except Exception as e:
@@ -320,8 +323,8 @@ def get_pharmacy_info_by_id(pharmacy_id):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"SELECT name, location, phone, chat_id, operating_hours FROM pharmacies WHERE id = {placeholder}", (pharmacy_id,))
+        p = get_placeholder()
+        cursor.execute(f"SELECT name, location, phone, chat_id, operating_hours FROM pharmacies WHERE id = {p}", (pharmacy_id,))
         row = cursor.fetchone()
         return row
     except Exception as e:
@@ -336,8 +339,8 @@ def get_pharmacy_info_by_chat_id(chat_id):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"SELECT name, location, phone, operating_hours FROM pharmacies WHERE chat_id = {placeholder} ORDER BY id DESC LIMIT 1", (chat_id,))
+        p = get_placeholder()
+        cursor.execute(f"SELECT name, location, phone, operating_hours FROM pharmacies WHERE chat_id = {p} AND is_verified = 1 ORDER BY id DESC LIMIT 1", (chat_id,))
         row = cursor.fetchone()
         return row
     except Exception as e:
@@ -352,9 +355,9 @@ def get_verified_pharmacies_by_location(location=None):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        p = get_placeholder()
         if location:
-            placeholder = "%s" if DATABASE_URL else "?"
-            cursor.execute(f"SELECT chat_id FROM pharmacies WHERE is_verified = 1 AND LOWER(location) LIKE LOWER({placeholder})", (f"%{location}%",))
+            cursor.execute(f"SELECT chat_id FROM pharmacies WHERE is_verified = 1 AND LOWER(location) LIKE LOWER({p})", (f"%{location}%",))
         else:
             cursor.execute("SELECT chat_id FROM pharmacies WHERE is_verified = 1")
         rows = cursor.fetchall()
@@ -371,10 +374,7 @@ def get_all_verified_pharmacies():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        try:
-            cursor.execute("SELECT id, name, location, phone, operating_hours, latitude, longitude FROM pharmacies WHERE is_verified = 1")
-        except:
-            cursor.execute("SELECT id, name, location, phone, operating_hours FROM pharmacies WHERE is_verified = 1")
+        cursor.execute("SELECT id, name, location, phone, operating_hours, latitude, longitude FROM pharmacies WHERE is_verified = 1")
         rows = cursor.fetchall()
         return rows
     except Exception as e:
@@ -412,10 +412,10 @@ def save_search_history(user_id, medicine_name, result_summary=""):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
+        p = get_placeholder()
         cursor.execute(f"""
             INSERT INTO search_history (user_id, medicine_name, result_summary)
-            VALUES ({placeholder}, {placeholder}, {placeholder})
+            VALUES ({p}, {p}, {p})
         """, (user_id, medicine_name, result_summary[:500] if result_summary else ""))
         if DATABASE_URL:
             conn.commit()
@@ -432,10 +432,10 @@ def get_user_search_history(user_id, limit=10):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
+        p = get_placeholder()
         cursor.execute(f"""
             SELECT medicine_name, search_date FROM search_history 
-            WHERE user_id = {placeholder} ORDER BY search_date DESC LIMIT {placeholder}
+            WHERE user_id = {p} ORDER BY search_date DESC LIMIT {p}
         """, (user_id, limit))
         rows = cursor.fetchall()
         return rows
@@ -451,18 +451,13 @@ def get_top_medicines(limit=10):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("""
+        p = get_placeholder()
+        cursor.execute(f"""
             SELECT medicine_name, COUNT(*) as search_count 
             FROM search_history 
             GROUP BY medicine_name 
             ORDER BY search_count DESC 
-            LIMIT %s
-        """ if DATABASE_URL else """
-            SELECT medicine_name, COUNT(*) as search_count 
-            FROM search_history 
-            GROUP BY medicine_name 
-            ORDER BY search_count DESC 
-            LIMIT ?
+            LIMIT {p}
         """, (limit,))
         rows = cursor.fetchall()
         return rows
@@ -482,11 +477,11 @@ def log_ai_request(user_id, request_type, request_data, response_data, status_co
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
+        p = get_placeholder()
         cursor.execute(f"""
             INSERT INTO ai_logs 
             (user_id, request_type, request_data, response_data, status_code, error_message, response_time)
-            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+            VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p})
         """, (user_id, request_type, json.dumps(request_data)[:500], json.dumps(response_data)[:500], status_code, error, response_time))
         if DATABASE_URL:
             conn.commit()
@@ -541,22 +536,15 @@ def get_top_pharmacies(limit=10):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("""
+        p = get_placeholder()
+        cursor.execute(f"""
             SELECT p.id, p.name, p.location, p.phone, COALESCE(COUNT(pr.id), 0) as response_count
             FROM pharmacies p
             LEFT JOIN pharmacy_responses pr ON p.id = pr.pharmacy_id
             WHERE p.is_verified = 1
             GROUP BY p.id, p.name, p.location, p.phone
             ORDER BY response_count DESC
-            LIMIT %s
-        """ if DATABASE_URL else """
-            SELECT p.id, p.name, p.location, p.phone, COALESCE(COUNT(pr.id), 0) as response_count
-            FROM pharmacies p
-            LEFT JOIN pharmacy_responses pr ON p.id = pr.pharmacy_id
-            WHERE p.is_verified = 1
-            GROUP BY p.id, p.name, p.location, p.phone
-            ORDER BY response_count DESC
-            LIMIT ?
+            LIMIT {p}
         """, (limit,))
         rows = cursor.fetchall()
         return rows
@@ -576,10 +564,10 @@ def save_notification(user_id, pharmacy_id, notification_type, message):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
+        p = get_placeholder()
         cursor.execute(f"""
             INSERT INTO notifications (user_id, pharmacy_id, type, message)
-            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder})
+            VALUES ({p}, {p}, {p}, {p})
         """, (user_id, pharmacy_id, notification_type, message))
         if DATABASE_URL:
             conn.commit()
@@ -598,11 +586,11 @@ def get_notifications(user_id, limit=10):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
+        p = get_placeholder()
         cursor.execute(f"""
             SELECT id, type, message, is_read, created_at FROM notifications 
-            WHERE user_id = {placeholder} 
-            ORDER BY created_at DESC LIMIT {placeholder}
+            WHERE user_id = {p} 
+            ORDER BY created_at DESC LIMIT {p}
         """, (user_id, limit))
         rows = cursor.fetchall()
         return rows
@@ -618,8 +606,8 @@ def mark_notification_read(notification_id):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"UPDATE notifications SET is_read = TRUE WHERE id = {placeholder}", (notification_id,))
+        p = get_placeholder()
+        cursor.execute(f"UPDATE notifications SET is_read = TRUE WHERE id = {p}", (notification_id,))
         if DATABASE_URL:
             conn.commit()
         return True
@@ -637,8 +625,8 @@ def get_unread_notification_count(user_id):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"SELECT COUNT(*) FROM notifications WHERE user_id = {placeholder} AND is_read = FALSE", (user_id,))
+        p = get_placeholder()
+        cursor.execute(f"SELECT COUNT(*) FROM notifications WHERE user_id = {p} AND is_read = FALSE", (user_id,))
         count = cursor.fetchone()[0]
         return count
     except Exception as e:
@@ -666,18 +654,10 @@ def save_pharmacy_request(pharmacy_chat_id, customer_id, medicine_name, photo_fi
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # Convert to int
-        try:
-            pharmacy_chat_id = int(pharmacy_chat_id)
-            customer_id = int(customer_id)
-        except Exception as e:
-            logging.error(f"Conversion error: {e}")
-            return False
+        p = get_placeholder()
         
         # Get the pharmacy ID from the database using chat_id
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"SELECT id FROM pharmacies WHERE chat_id = {placeholder} AND is_verified = 1", (pharmacy_chat_id,))
+        cursor.execute(f"SELECT id FROM pharmacies WHERE chat_id = {p} AND is_verified = 1", (pharmacy_chat_id,))
         pharm_row = cursor.fetchone()
         
         if not pharm_row:
@@ -687,18 +667,10 @@ def save_pharmacy_request(pharmacy_chat_id, customer_id, medicine_name, photo_fi
         pharmacy_db_id = pharm_row[0]
         logging.info(f"Saving request for pharmacy DB ID: {pharmacy_db_id}")
         
-        # Insert with photo_file_id if available
-        try:
-            cursor.execute(f"""
-                INSERT INTO pharmacy_responses (pharmacy_id, customer_id, medicine_name, price, photo_file_id, status)
-                VALUES ({placeholder}, {placeholder}, {placeholder}, NULL, {placeholder}, 'pending')
-            """, (pharmacy_db_id, customer_id, medicine_name, photo_file_id))
-        except Exception as e:
-            logging.warning(f"Status or photo column may not exist: {e}")
-            cursor.execute(f"""
-                INSERT INTO pharmacy_responses (pharmacy_id, customer_id, medicine_name, price)
-                VALUES ({placeholder}, {placeholder}, {placeholder}, NULL)
-            """, (pharmacy_db_id, customer_id, medicine_name))
+        cursor.execute(f"""
+            INSERT INTO pharmacy_responses (pharmacy_id, customer_id, medicine_name, photo_file_id, status)
+            VALUES ({p}, {p}, {p}, {p}, 'pending')
+        """, (pharmacy_db_id, customer_id, medicine_name, photo_file_id))
         
         if DATABASE_URL:
             conn.commit()
@@ -719,12 +691,12 @@ def update_order_status(order_id, status, price=None):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
+        p = get_placeholder()
         
         if price:
-            cursor.execute(f"UPDATE pharmacy_responses SET status = {placeholder}, price = {placeholder} WHERE id = {placeholder}", (status, price, order_id))
+            cursor.execute(f"UPDATE pharmacy_responses SET status = {p}, price = {p} WHERE id = {p}", (status, price, order_id))
         else:
-            cursor.execute(f"UPDATE pharmacy_responses SET status = {placeholder} WHERE id = {placeholder}", (status, order_id))
+            cursor.execute(f"UPDATE pharmacy_responses SET status = {p} WHERE id = {p}", (status, order_id))
         
         if DATABASE_URL:
             conn.commit()
@@ -734,6 +706,26 @@ def update_order_status(order_id, status, price=None):
             conn.rollback()
         logging.error(f"Update order status error: {e}")
         return False
+    finally:
+        if conn:
+            conn.close()
+
+def get_order_by_id(order_id):
+    """Get order details by ID"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        p = get_placeholder()
+        cursor.execute(f"""
+            SELECT id, pharmacy_id, customer_id, medicine_name, price, photo_file_id, response_time, status
+            FROM pharmacy_responses 
+            WHERE id = {p}
+        """, (order_id,))
+        return cursor.fetchone()
+    except Exception as e:
+        logging.error(f"Get order error: {e}")
+        return None
     finally:
         if conn:
             conn.close()
@@ -756,7 +748,8 @@ MAIN_KEYBOARD = [
     ["🔍 መድኃኒት ፈልግ", "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ"],
     ["📍 አካባቢ ምረጥ", "📋 የፋርማሲዎች ዝርዝር"],
     ["🏥 ፋርማሲ መዝግብ", "📋 የታዘዙ መድኃኒቶች"],
-    ["📞 እገዛ / ድጋፍ", "🏠 ወደ ዋና ገጽ"]
+    ["📞 እገዛ / ድጋፍ", "📊 ስታቲስቲክስ"],
+    ["🏠 ወደ ዋና ገጽ"]
 ]
 
 LOCATION_KEYBOARD = [
@@ -911,6 +904,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"👇 የሚፈልጉትን አገልግሎት ከታች ይምረጡ፦"
     )
+    
     if update.message:
         try:
             await update.message.reply_photo(
@@ -949,10 +943,10 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
+        p = get_placeholder()
         
         # Get pharmacy ID from chat_id
-        cursor.execute(f"SELECT id FROM pharmacies WHERE chat_id = {placeholder} AND is_verified = 1", (pharmacy_chat_id,))
+        cursor.execute(f"SELECT id FROM pharmacies WHERE chat_id = {p} AND is_verified = 1", (pharmacy_chat_id,))
         pharm_row = cursor.fetchone()
         
         if not pharm_row:
@@ -969,7 +963,7 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor.execute(f"""
             SELECT id, customer_id, medicine_name, price, photo_file_id, response_time, status
             FROM pharmacy_responses 
-            WHERE pharmacy_id = {placeholder} 
+            WHERE pharmacy_id = {p} 
             ORDER BY response_time DESC
         """, (pharmacy_db_id,))
         all_orders = cursor.fetchall()
@@ -1021,25 +1015,21 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ✅ Show each order (newest first)
     for idx, order in enumerate(all_orders, 1):
         order_id, customer_id, medicine_name, price, photo_file_id, response_time, status = order
-        time_str = response_time.strftime('%Y-%m-%d %H:%M') if hasattr(response_time, 'strftime') else str(time_str)
+        time_str = response_time.strftime('%Y-%m-%d %H:%M') if hasattr(response_time, 'strftime') else str(response_time)
         
         status_emoji = "⏳" if status == 'pending' else "✅" if status == 'responded' else "📦"
         status_text = "ምላሽ የሚጠብቅ" if status == 'pending' else "መልስ ተሰጥቷል" if status == 'responded' else "ተጠናቅቋል"
         
-        # For pharmacy: show medicine name, time, status (NO customer_id)
         text = f"{status_emoji} **{idx}. {medicine_name}**\n"
         text += f"   📅 {time_str}\n"
         text += f"   📊 {status_text}\n"
         
-        # If responded, show price/response
         if status == 'responded' and price:
             text += f"   💰 {price[:50]}\n"
         
-        # If photo is available, show view button
         if photo_file_id:
             text += f"   📷 ፎቶ ተያይዟል\n"
         
-        # For admin only: show customer_id
         if is_admin:
             text += f"   👤 ደንበኛ: {customer_id}\n"
         
@@ -1054,7 +1044,6 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=inline_keyboard
             )
         else:
-            # Show view photo button if photo exists
             if photo_file_id:
                 view_keyboard = InlineKeyboardMarkup([
                     [InlineKeyboardButton("📷 ፎቶውን ይመልከቱ", callback_data=f"view_photo_{order_id}")]
@@ -1078,30 +1067,13 @@ async def view_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     order_id = int(query.data.split("_")[2])
     
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"SELECT photo_file_id, medicine_name, customer_id FROM pharmacy_responses WHERE id = {placeholder}", (order_id,))
-        result = cursor.fetchone()
-    except Exception as e:
-        logging.error(f"Error getting photo: {e}")
-        await query.edit_message_text("❌ ፎቶውን ማግኘት አልተቻለም።")
-        return
-    finally:
-        if conn:
-            conn.close()
+    order = get_order_by_id(order_id)
     
-    if not result or not result[0]:
+    if not order or not order[5]:  # photo_file_id is index 5
         await query.edit_message_text("❌ ለዚህ ትዕዛዝ ምንም ፎቶ አልተገኘም።")
         return
     
-    photo_file_id, medicine_name, customer_id = result
-    
-    # Store order info for response
-    context.user_data["viewing_order_id"] = order_id
-    context.user_data["viewing_customer_id"] = customer_id
+    photo_file_id, medicine_name = order[5], order[3]  # photo_file_id, medicine_name
     
     # Show photo with response buttons
     inline_keyboard = InlineKeyboardMarkup([
@@ -1127,30 +1099,13 @@ async def respond_from_photo_callback(update: Update, context: ContextTypes.DEFA
     await query.answer()
     
     order_id = int(query.data.split("_")[2])
-    
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"""
-            SELECT customer_id, medicine_name, photo_file_id FROM pharmacy_responses 
-            WHERE id = {placeholder}
-        """, (order_id,))
-        order = cursor.fetchone()
-    except Exception as e:
-        logging.error(f"Error getting order: {e}")
-        await query.edit_message_text("❌ የትዕዛዝ መረጃ ማግኘት አልተቻለም።")
-        return
-    finally:
-        if conn:
-            conn.close()
+    order = get_order_by_id(order_id)
     
     if not order:
         await query.edit_message_text("❌ ይህ ትዕዛዝ አልተገኘም።")
         return
     
-    customer_id, medicine_name, photo_file_id = order
+    customer_id, medicine_name = order[2], order[3]  # customer_id, medicine_name
     
     context.user_data["responding_order_id"] = order_id
     context.user_data["responding_customer_id"] = customer_id
@@ -1178,30 +1133,13 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer()
     
     order_id = int(query.data.split("_")[2])
-    
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"""
-            SELECT customer_id, medicine_name, photo_file_id FROM pharmacy_responses 
-            WHERE id = {placeholder}
-        """, (order_id,))
-        order = cursor.fetchone()
-    except Exception as e:
-        logging.error(f"Error getting order: {e}")
-        await query.edit_message_text("❌ የትዕዛዝ መረጃ ማግኘት አልተቻለም።")
-        return
-    finally:
-        if conn:
-            conn.close()
+    order = get_order_by_id(order_id)
     
     if not order:
         await query.edit_message_text("❌ ይህ ትዕዛዝ አልተገኘም።")
         return
     
-    customer_id, medicine_name, photo_file_id = order
+    customer_id, medicine_name, photo_file_id = order[2], order[3], order[5]
     
     context.user_data["responding_order_id"] = order_id
     context.user_data["responding_customer_id"] = customer_id
@@ -1215,7 +1153,6 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
         f"✅ አለኝ ወይም ❌ የለኝም ብለው መመለስ ይችላሉ።"
     )
     
-    # If photo exists, show it with response options
     if photo_file_id:
         try:
             await query.edit_message_text("📷 ፎቶውን እያየን ነው...")
@@ -1428,11 +1365,12 @@ Medication: {text}"""
     return ConversationHandler.END
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """📊 ስታቲስቲክስ ለሁሉም ተጠቃሚዎች"""
     user_id = update.effective_user.id
     is_admin = (user_id == ADMIN_CHAT_ID)
     
     ai_stats = get_ai_stats()
-    total_pharms = get_bot_statistics()
+    total_pharms, verified_pharms, pending_pharms = get_bot_statistics()
     top_meds = get_top_medicines(5)
     top_pharms = get_top_pharmacies(5)
     search_history = get_user_search_history(user_id, 5)
@@ -1447,10 +1385,10 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"• ስህተቶች: {ai_stats['errors']}\n"
     text += f"• አማካይ ምላሽ ጊዜ: {ai_stats['avg_time']} ሰከንድ\n\n"
     text += f"🏥 **ፋርማሲዎች**\n"
-    text += f"• ጠቅላላ: {total_pharms[0]}\n"
-    text += f"• የተረጋገጡ: {total_pharms[1]}\n"
+    text += f"• ጠቅላላ: {total_pharms}\n"
+    text += f"• የተረጋገጡ: {verified_pharms}\n"
     if is_admin:
-        text += f"• ማረጋገጫ የሚጠብቁ: {total_pharms[2]}\n"
+        text += f"• ማረጋገጫ የሚጠብቁ: {pending_pharms}\n"
     text += "\n"
     
     if top_meds:
@@ -1471,9 +1409,14 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             date_str = date.strftime('%Y-%m-%d %H:%M') if isinstance(date, datetime) else str(date)
             text += f"• {med} - {date_str}\n"
     
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
+    await update.message.reply_text(
+        text, 
+        parse_mode="Markdown", 
+        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+    )
 
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """📊 ሙሉ ስታቲስቲክስ ለአድሚን ብቻ"""
     user_id = update.effective_user.id
     if user_id != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ ይቅርታ! ይህንን ትዕዛዝ መጠቀም የሚችለው አድሚኑ ብቻ ነው።")
@@ -1496,7 +1439,11 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"━━━━━━━━━━━━━━━\n"
         f"🤖 *አል-ኑር መድኃኒት አፋላጊ ሲስተም*"
     )
-    await update.message.reply_text(stats_text, parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
+    await update.message.reply_text(
+        stats_text, 
+        parse_mode="Markdown", 
+        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+    )
 
 async def list_pharmacies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """📋 የፋርማሲዎች ዝርዝር ከደረጃ ጋር"""
@@ -1615,6 +1562,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
             "🏥 ፋርማሲ መዝግብ",
             "📋 የታዘዙ መድኃኒቶች",
             "📞 እገዛ / ድጋፍ",
+            "📊 ስታቲስቲክስ",
             "🏠 ወደ ዋና ገጽ"
         ]
         
@@ -1642,13 +1590,6 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
         )
         return ConversationHandler.END
 
-    keyboard = [[
-        InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{user.id}"),
-        InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{user.id}")
-    ]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    target_chats = verified_pharmacies
-
     photo_file_id = None
     is_doc = False
     medicine_name = msg.text if msg.text else "Prescription Photo"
@@ -1665,64 +1606,128 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
 
     loc_tag = f" (አካባቢ፦ {user_loc})" if user_loc else ""
 
-    # Send notification ONCE to all pharmacies
+    # Send notification to all pharmacies concurrently
     sent_count = 0
     if photo_file_id:
         await msg.reply_text(
-            f"✅ የሐኪም ማዘዣ ፎቶዎ ተቀብለናል! ለ{len(target_chats)} ሕጋዊ ፋርማሲዎች ጥያቄው ተልኳል።{loc_tag}",
+            f"✅ የሐኪም ማዘዣ ፎቶዎ ተቀብለናል! ለ{len(verified_pharmacies)} ሕጋዊ ፋርማሲዎች ጥያቄው ተልኳል።{loc_tag}",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
-        for chat_id in target_chats:
+        
+        # Send messages concurrently
+        tasks = []
+        for chat_id in verified_pharmacies:
+            # Save request in database
+            save_result = save_pharmacy_request(chat_id, user.id, medicine_name, photo_file_id)
+            if not save_result:
+                logging.error(f"Failed to save request for pharmacy chat_id: {chat_id}")
+                continue
+            
+            sent_count += 1
+            caption = f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ (በፎቶ)!**\n"
+            caption += f"👤 ከደንበኛ፡ {user.first_name}\n"
+            caption += f"📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n"
+            caption += f"📅 ቀን: {order_time.strftime('%Y-%m-%d')}\n"
+            caption += f"🕐 ሰዓት: {order_time.strftime('%H:%M')}\n\n"
+            caption += f"⚡ **እባክዎ በፍጥነት ምላሽ ይስጡ!**"
+            
+            # Get order ID for callback
+            order_id = None
+            conn = None
             try:
-                # Save with photo_file_id
-                save_result = save_pharmacy_request(chat_id, user.id, medicine_name, photo_file_id)
-                if not save_result:
-                    logging.error(f"Failed to save request for pharmacy chat_id: {chat_id}")
-                    continue
-                
-                sent_count += 1
-                caption = f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ (በፎቶ)!**\n"
-                caption += f"👤 ከደንበኛ፡ {user.first_name}\n"
-                caption += f"📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n"
-                caption += f"📅 ቀን: {order_time.strftime('%Y-%m-%d')}\n"
-                caption += f"🕐 ሰዓት: {order_time.strftime('%H:%M')}\n\n"
-                caption += f"⚡ **እባክዎ በፍጥነት ምላሽ ይስጡ!**"
-                
-                # Send photo to pharmacy
-                if is_doc:
-                    await context.bot.send_document(chat_id=chat_id, document=photo_file_id, caption=caption, reply_markup=reply_markup)
-                else:
-                    await context.bot.send_photo(chat_id=chat_id, photo=photo_file_id, caption=caption, reply_markup=reply_markup)
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                p = get_placeholder()
+                cursor.execute(f"SELECT id FROM pharmacy_responses WHERE pharmacy_id = (SELECT id FROM pharmacies WHERE chat_id = {p}) AND customer_id = {p} ORDER BY id DESC LIMIT 1", (chat_id, user.id))
+                row = cursor.fetchone()
+                order_id = row[0] if row else None
             except Exception as e:
-                logging.error(f"Pharmacy notify error for {chat_id}: {e}")
+                logging.error(f"Error getting order ID: {e}")
+            finally:
+                if conn:
+                    conn.close()
+            
+            # Create inline keyboard with order ID
+            if order_id:
+                inline_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{order_id}_{user.id}"),
+                     InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{order_id}_{user.id}")]
+                ])
+            else:
+                inline_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{user.id}"),
+                     InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{user.id}")]
+                ])
+            
+            if is_doc:
+                tasks.append(context.bot.send_document(chat_id=chat_id, document=photo_file_id, caption=caption, reply_markup=inline_keyboard))
+            else:
+                tasks.append(context.bot.send_photo(chat_id=chat_id, photo=photo_file_id, caption=caption, reply_markup=inline_keyboard))
+        
+        # Execute all send operations concurrently
+        if tasks:
+            await asyncio.gather(*tasks)
+            
     elif msg.text:
         med_name = msg.text
         await msg.reply_text(
-            f"✅ የመድኃኒት ስም '{med_name}' ተቀብለናል! ለ{len(target_chats)} ሕጋዊ ፋርማሲዎች እየተላከ ነው...{loc_tag}",
+            f"✅ የመድኃኒት ስም '{med_name}' ተቀብለናል! ለ{len(verified_pharmacies)} ሕጋዊ ፋርማሲዎች እየተላከ ነው...{loc_tag}",
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
-        for chat_id in target_chats:
+        
+        tasks = []
+        for chat_id in verified_pharmacies:
+            # Save request in database
+            save_result = save_pharmacy_request(chat_id, user.id, med_name)
+            if not save_result:
+                logging.error(f"Failed to save request for pharmacy chat_id: {chat_id}")
+                continue
+            
+            sent_count += 1
+            
+            # Get order ID for callback
+            order_id = None
+            conn = None
             try:
-                # Save without photo
-                save_result = save_pharmacy_request(chat_id, user.id, med_name)
-                if not save_result:
-                    logging.error(f"Failed to save request for pharmacy chat_id: {chat_id}")
-                    continue
-                
-                sent_count += 1
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ!**\n"
-                         f"💊 የተፈለገው መድኃኒት፡ **{med_name}**\n"
-                         f"👤 ከደንበኛ፡ {user.first_name}\n"
-                         f"📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n"
-                         f"📅 ቀን: {order_time.strftime('%Y-%m-%d')}\n"
-                         f"🕐 ሰዓት: {order_time.strftime('%H:%M')}\n\n"
-                         f"⚡ **እባክዎ በፍጥነት ምላሽ ይስጡ!**",
-                    reply_markup=reply_markup
-                )
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                p = get_placeholder()
+                cursor.execute(f"SELECT id FROM pharmacy_responses WHERE pharmacy_id = (SELECT id FROM pharmacies WHERE chat_id = {p}) AND customer_id = {p} ORDER BY id DESC LIMIT 1", (chat_id, user.id))
+                row = cursor.fetchone()
+                order_id = row[0] if row else None
             except Exception as e:
-                logging.error(f"Pharmacy notify error for {chat_id}: {e}")
+                logging.error(f"Error getting order ID: {e}")
+            finally:
+                if conn:
+                    conn.close()
+            
+            # Create inline keyboard with order ID
+            if order_id:
+                inline_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{order_id}_{user.id}"),
+                     InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{order_id}_{user.id}")]
+                ])
+            else:
+                inline_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ መድኃኒቱ አለኝ", callback_data=f"available_{user.id}"),
+                     InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{user.id}")]
+                ])
+            
+            tasks.append(context.bot.send_message(
+                chat_id=chat_id,
+                text=f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ!**\n"
+                     f"💊 የተፈለገው መድኃኒት፡ **{med_name}**\n"
+                     f"👤 ከደንበኛ፡ {user.first_name}\n"
+                     f"📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n"
+                     f"📅 ቀን: {order_time.strftime('%Y-%m-%d')}\n"
+                     f"🕐 ሰዓት: {order_time.strftime('%H:%M')}\n\n"
+                     f"⚡ **እባክዎ በፍጥነት ምላሽ ይስጡ!**",
+                reply_markup=inline_keyboard
+            ))
+        
+        # Execute all send operations concurrently
+        if tasks:
+            await asyncio.gather(*tasks)
 
     # If no notifications were sent, inform user
     if sent_count == 0:
@@ -1734,11 +1739,29 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
     return ConversationHandler.END
 
 async def handle_pharmacy_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle pharmacy response via callback (available/not available)"""
     query = update.callback_query
     await query.answer()
     data = query.data
-    action, customer_id = data.rsplit("_", 1)
-    context.chat_data["target_customer_id"] = customer_id
+    
+    # Parse callback data
+    parts = data.split("_")
+    action = parts[0]
+    
+    # Check if we have order_id
+    if len(parts) >= 3 and parts[1].isdigit():
+        order_id = int(parts[1])
+        customer_id = parts[2]
+        context.user_data["responding_order_id"] = order_id
+        context.user_data["responding_customer_id"] = customer_id
+    elif len(parts) == 2:
+        # Legacy format without order_id
+        customer_id = parts[1]
+        context.user_data["responding_customer_id"] = customer_id
+        context.user_data["responding_order_id"] = None
+    else:
+        await query.edit_message_text("❌ የትዕዛዝ መረጃ አልተገኘም።")
+        return
 
     if action == "available":
         msg_text = (
@@ -1770,25 +1793,25 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
     customer_id = context.user_data.get("responding_customer_id")
     
     if order_id and customer_id:
-        conn = None
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            placeholder = "%s" if DATABASE_URL else "?"
-            
-            # Update order with price and status
-            cursor.execute(f"""
-                UPDATE pharmacy_responses 
-                SET price = {placeholder}, status = 'responded'
-                WHERE id = {placeholder}
-            """, (price_details, order_id))
-            if DATABASE_URL:
-                conn.commit()
-            
+        # Update the specific order
+        success = update_order_status(order_id, 'responded', price_details)
+        
+        if success:
             # Send response to customer
+            pharmacy_chat_id = update.effective_user.id
+            pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
+            pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
+            pharm_loc = pharm_info[1] if pharm_info else "ያልተጠቀሰ"
+            pharm_phone = pharm_info[2] if pharm_info else "ያልተጠቀሰ"
+            pharm_hours = pharm_info[3] if pharm_info and pharm_info[3] else "ያልተጠቀሰ"
+            
             await context.bot.send_message(
                 chat_id=int(customer_id),
-                text=f"🎉 የመድኃኒት መረጃ ተገኘ!\n\n"
+                text=f"🎉 የመድኃኒት መረጃ ከ{pharm_name} ተገኘ!\n\n"
+                     f"🏥 ፋርማሲ፦ {pharm_name}\n"
+                     f"📍 አካባቢ፦ {pharm_loc}\n"
+                     f"📞 ስልክ፦ {pharm_phone}\n"
+                     f"🕒 የስራ ሰዓት፦ {pharm_hours}\n\n"
                      f"💰 የዋጋ እና የዝርዝር መረጃ፦\n{price_details}",
                 reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
             )
@@ -1798,24 +1821,17 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
                 "📋 ይህ ትዕዛዝ አሁን 'መልስ ተሰጥቷል' በሚለው ሁኔታ ላይ ነው።",
                 reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
             )
-            
-            # Clear context
-            context.user_data.pop("responding_order_id", None)
-            context.user_data.pop("responding_customer_id", None)
-            
-        except Exception as e:
-            if conn:
-                conn.rollback()
-            logging.error(f"Error updating order: {e}")
+        else:
             await msg.reply_text("❌ መልስዎን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ።")
-        finally:
-            if conn:
-                conn.close()
+        
+        # Clear context
+        context.user_data.pop("responding_order_id", None)
+        context.user_data.pop("responding_customer_id", None)
         
         return ConversationHandler.END
     
-    # Regular flow for pharmacy response (from callback)
-    customer_id = context.chat_data.get("target_customer_id")
+    # If no order_id, this is from the old flow - create new response
+    customer_id = context.user_data.get("responding_customer_id")
     pharmacy_chat_id = msg.chat_id
 
     pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
@@ -1823,27 +1839,6 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
     pharm_loc = pharm_info[1] if pharm_info else "ያልተጠቀሰ"
     pharm_phone = pharm_info[2] if pharm_info else "ያልተጠቀሰ"
     pharm_hours = pharm_info[3] if pharm_info and pharm_info[3] else "ያልተጠቀሰ"
-
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"""
-            INSERT INTO pharmacy_responses (pharmacy_id, customer_id, medicine_name, price, status)
-            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 'responded')
-        """, (pharmacy_chat_id, customer_id, price_details[:50], price_details))
-        if DATABASE_URL:
-            conn.commit()
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logging.error(f"Save pharmacy response error: {e}")
-    finally:
-        if conn:
-            conn.close()
-
-    await msg.reply_text("✅ ዋጋው እና መረጃው ለደንበኛው በስኬት ተልኳል!", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
 
     if customer_id:
         try:
@@ -1857,9 +1852,12 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
                      f"💰 የዋጋ እና የዝርዝር መረጃ፦\n{price_details}",
                 reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
             )
+            await msg.reply_text("✅ ዋጋው እና መረጃው ለደንበኛው በስኬት ተልኳል!", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
         except Exception as e:
             logging.error(f"ለደንበኛው {customer_id} መላክ አልተቻለም፦ {e}")
+            await msg.reply_text("❌ መልስዎን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ።")
 
+    context.user_data.pop("responding_customer_id", None)
     return ConversationHandler.END
 
 async def handle_admin_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2031,11 +2029,29 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
     )
 
+async def handle_unmatched(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle unmatched messages and guide user to menu"""
+    await update.message.reply_text(
+        "❌ ይህንን መልእክት አልገባኝም።\n\n"
+        "💡 እባክዎ ከታች ካሉት አዝራሮች ይምረጡ፦",
+        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+    )
+
 async def error_handler_func(update: object, context: ContextTypes.DEFAULT_TYPE):
     logging.error(msg="Exception while handling an update:", exc_info=context.error)
+    
+    # Try to send error message to user
+    if update and hasattr(update, 'effective_message') and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "❌ የሆነ ችግር ተፈጥሯል። እባክዎ እንደገና ይሞክሩ ወይም /start ይጫኑ።",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+        except:
+            pass
 
 # ==============================================================================
-# 13. MAIN FUNCTION
+# 12. MAIN FUNCTION
 # ==============================================================================
 
 def main():
@@ -2062,7 +2078,6 @@ def main():
         fallbacks=[CommandHandler("start", start), MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)],
     )
 
-    # ✅ የተሻሻለው pharmacy_reply_conv
     pharmacy_reply_conv = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(handle_pharmacy_response, pattern="^(available_|not_available_)"),
@@ -2098,8 +2113,8 @@ def main():
     app.add_handler(CallbackQueryHandler(view_photo_callback, pattern="^view_photo_"))
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stats", admin_stats))
-    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("adminstats", admin_stats_command))
+    app.add_handler(MessageHandler(filters.Regex("^📊 ስታቲስቲክስ$"), stats_command))
     app.add_handler(MessageHandler(filters.Regex("^📞 እገዛ / ድጋፍ$"), show_help))
     app.add_handler(MessageHandler(filters.Regex("^📋 የፋርማሲዎች ዝርዝር$"), list_pharmacies))
     app.add_handler(MessageHandler(filters.Regex("^📋 የታዘዙ መድኃኒቶች$"), show_orders))
@@ -2114,6 +2129,9 @@ def main():
     app.add_handler(pharmacy_conv)
 
     app.add_handler(MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start))
+    
+    # Fallback for unmatched messages
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unmatched))
 
     app.add_error_handler(error_handler_func)
 
