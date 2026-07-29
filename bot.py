@@ -961,10 +961,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     welcome_text = (
         f"👋 ሰላም {user_name}! ወደ አል-ኑር መድኃኒት አፋላጊ በደህና መጡ።\n\n"
-        f"━━━━━━━ ⚖️ ሕጋዊ ማስታወቂያ ━━━━━━━\n"
+        f"━━━ ⚖️ ሕጋዊ ማስታወቂያ ━━━\n"
         f"• 🏥 ከሕጋዊና ፈቃድ ካላቸው ፋርማሲዎች ጋር ብቻ ያገናኛል።\n"
         f"• 📄 መድኃኒት ሲገዙ የሐኪም ማዘዣ (Prescription) ይያዙ።\n"
-        f"• ℹ️ ይህ ቦት የመረጃ ማገናኛ እንጂ ሕክምና አይሰጥም።\n"
+        f"• ℹ️ ይህ ቦት የመረጃ ማገናኛ እንጂ Pharmacy አይደለም።\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"👇 የሚፈልጉትን አገልግሎት ከታች ይምረጡ፦"
     )
@@ -1066,7 +1066,7 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     completed_count = len([o for o in all_orders if o[5] == 'completed'])
     
     await update.message.reply_text(
-        f"📋 **የታዘዙ መድኃኒቶች** (ከአዲስ ወደ አሮጌ)\n"
+        f"📋 **የታዘዙ መድኃኒቶች** (ከአሮጌ ወደ አዲስ)\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🔔 ጠቅላላ: {len(all_orders)} ጥያቄዎች\n"
         f"⏳ ምላሽ የሚጠብቁ: {pending_count}\n"
@@ -1183,7 +1183,7 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
         
         # ✅ Send a new message with the keyboard
         await query.message.reply_text(
-            "👇 ከታች ያሉትን አዝራሮች ይጠቀሙ፦",
+            "👇 ከታች ያሉትን Button ይጠቀሙ፦",
             reply_markup=ReplyKeyboardMarkup(price_keyboard, resize_keyboard=True)
         )
         
@@ -1641,7 +1641,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
             "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ",
             "📍 አካባቢ ምረጥ",
             "📋 የፋርማሲዎች ዝርዝር",
-            "🏥 ፋርማሲ መዝግብ",
+            "🏥 ፋርማሲ መመዝገቢያ",
             "📋 የታዘዙ መድኃኒቶች",
             "📞 እገዛ / ድጋፍ",
             "🏠 ወደ ዋና ገጽ"
@@ -1825,8 +1825,7 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
             
             # ✅ IMPROVED UI - Beautiful formatted message for customer
             customer_message = (
-                f"🎉 **ያዘዙት መድኃኒት ተገኘ!**\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"🎉 **ያዘዙት መድኃኒት ተገኘ!**\n"             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"💊 **የመድኃኒቱ ስም**\n"
                 f"└─ {medicine_name}\n\n"
                 f"🏥 **የፋርማሲ ስም**\n"
@@ -1837,10 +1836,9 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
                 f"└─ {pharm_phone}\n\n"
                 f"🕒 **የስራ ሰዓት**\n"
                 f"└─ {pharm_hours}\n\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"💰 **ዋጋ እና ዝርዝር መረጃ**\n"
-                f"└─ {price_details}\n\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"└─ {price_details}\n\n"             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"📌 ለመግዛት ከላይ ባለው ስልክ ቁጥር ያግኙት።\n"
                 f" ለመግዛት ሲሄዱ የሀኪም ማዘዣ አይዘንጉ!"
             )
