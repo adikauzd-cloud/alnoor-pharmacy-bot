@@ -929,7 +929,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """📋 ለፋርማሲስቱ የታዘዙ መድኃኒቶች ማሳየት (የደንበኛ መለያ ሳይታይ)"""
+    """📋 ለፋርማሲስቱ የታዘዙ መድኃኒቶች ማሳየት (ከታች አዲሱ ትዕዛዝ)"""
     
     pharmacy_chat_id = update.effective_user.id
     user_id = update.effective_user.id
@@ -965,7 +965,7 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         pharmacy_db_id = pharm_row[0]
         
-        # Get all orders for this pharmacy
+        # ✅ Get all orders for this pharmacy - ORDER BY response_time DESC (አዲሱ ከላይ)
         cursor.execute(f"""
             SELECT id, customer_id, medicine_name, price, photo_file_id, response_time, status
             FROM pharmacy_responses 
@@ -1018,7 +1018,7 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
     )
     
-    # Show each order (hide customer_id from pharmacy)
+    # ✅ Show each order (newest first)
     for idx, order in enumerate(all_orders, 1):
         order_id, customer_id, medicine_name, price, photo_file_id, response_time, status = order
         time_str = response_time.strftime('%Y-%m-%d %H:%M') if hasattr(response_time, 'strftime') else str(response_time)
@@ -1043,7 +1043,7 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_admin:
             text += f"   👤 ደንበኛ: {customer_id}\n"
         
-        # Show respond button only for pending orders
+        # ✅ Show respond button only for pending orders (ተስተካክሏል)
         if status == 'pending':
             inline_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("💊 መልስ ስጥ", callback_data=f"respond_order_{order_id}")]
@@ -1071,7 +1071,7 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
 async def view_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """📷 ከትዕዛዝ ጋር የተያያዘውን ፎቶ ማሳየት"""
+    """📷 ከትዕዛዝ ጋር የተያያዘውን ፎቶ ማሳየት እና መልስ መስጫ ቁልፍ"""
     
     query = update.callback_query
     await query.answer()
@@ -1083,7 +1083,7 @@ async def view_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         conn = get_db_connection()
         cursor = conn.cursor()
         placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"SELECT photo_file_id, medicine_name FROM pharmacy_responses WHERE id = {placeholder}", (order_id,))
+        cursor.execute(f"SELECT photo_file_id, medicine_name, customer_id FROM pharmacy_responses WHERE id = {placeholder}", (order_id,))
         result = cursor.fetchone()
     except Exception as e:
         logging.error(f"Error getting photo: {e}")
@@ -1097,18 +1097,79 @@ async def view_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("❌ ለዚህ ትዕዛዝ ምንም ፎቶ አልተገኘም።")
         return
     
-    photo_file_id, medicine_name = result
+    photo_file_id, medicine_name, customer_id = result
+    
+    # ✅ Store order info for response
+    context.user_data["viewing_order_id"] = order_id
+    context.user_data["viewing_customer_id"] = customer_id
+    
+    # ✅ Show photo with response buttons
+    inline_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💊 መልስ ስጥ", callback_data=f"respond_from_photo_{order_id}")]
+    ])
     
     try:
-        await query.edit_message_text(f"📷 **{medicine_name}** ፎቶ እየተላክ ነው...")
+        await query.edit_message_text(f"📷 **{medicine_name}** ፎቶ")
         await context.bot.send_photo(
             chat_id=update.effective_user.id,
             photo=photo_file_id,
-            caption=f"📷 ለ **{medicine_name}** የተያያዘ ፎቶ"
+            caption=f"📷 ለ **{medicine_name}** የተያያዘ ፎቶ\n\n💡 መልስ ለመስጠት ከታች ያለውን ቁልፍ ይጫኑ",
+            reply_markup=inline_keyboard
         )
     except Exception as e:
         logging.error(f"Error sending photo: {e}")
         await query.edit_message_text("❌ ፎቶውን መላክ አልተቻለም።")
+
+async def respond_from_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """📷 ከፎቶ ሲታይ መልስ ለመስጠት"""
+    
+    query = update.callback_query
+    await query.answer()
+    
+    order_id = int(query.data.split("_")[2])
+    
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"""
+            SELECT customer_id, medicine_name, photo_file_id FROM pharmacy_responses 
+            WHERE id = {placeholder}
+        """, (order_id,))
+        order = cursor.fetchone()
+    except Exception as e:
+        logging.error(f"Error getting order: {e}")
+        await query.edit_message_text("❌ የትዕዛዝ መረጃ ማግኘት አልተቻለም።")
+        return
+    finally:
+        if conn:
+            conn.close()
+    
+    if not order:
+        await query.edit_message_text("❌ ይህ ትዕዛዝ አልተገኘም።")
+        return
+    
+    customer_id, medicine_name, photo_file_id = order
+    
+    context.user_data["responding_order_id"] = order_id
+    context.user_data["responding_customer_id"] = customer_id
+    
+    message = (
+        f"💊 **ለትዕዛዝ መልስ መስጠት**\n\n"
+        f"📋 መድኃኒት: {medicine_name}\n"
+        f"👤 ደንበኛ: {customer_id}\n\n"
+        f"✏️ እባክዎ የመድኃኒቱን ዋጋ እና ተጨማሪ መረጃ ያስገቡ።\n\n"
+        f"ምሳሌ: 150 ብር, አለኝ, ከሰአት በኋላ ይምጡ\n\n"
+        f"✅ አለኝ ወይም ❌ የለኝም ብለው መመለስ ይችላሉ።"
+    )
+    
+    await query.edit_message_text(
+        message,
+        reply_markup=ReplyKeyboardMarkup([["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], resize_keyboard=True)
+    )
+    
+    return WAITING_FOR_PRICE
 
 async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """💊 ለታዘዘ መድኃኒት መልስ ለመስጠት"""
@@ -1154,7 +1215,7 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
         f"✅ አለኝ ወይም ❌ የለኝም ብለው መመለስ ይችላሉ።"
     )
     
-    # If photo exists, show it
+    # If photo exists, show it with response options
     if photo_file_id:
         try:
             await query.edit_message_text("📷 ፎቶውን እያየን ነው...")
@@ -1544,7 +1605,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
     if not msg:
         return ConversationHandler.END
 
-    # ✅ Check for menu buttons first
+    # Check for menu buttons first
     if msg.text:
         menu_buttons = [
             "🔍 መድኃኒት ፈልግ",
@@ -1593,7 +1654,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
     medicine_name = msg.text if msg.text else "Prescription Photo"
     order_time = datetime.now()
 
-    # ✅ Check if it's a photo
+    # Check if it's a photo
     if msg.photo:
         photo_file_id = msg.photo[-1].file_id
     elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith('image/'):
@@ -1604,7 +1665,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
 
     loc_tag = f" (አካባቢ፦ {user_loc})" if user_loc else ""
 
-    # ✅ Send notification ONCE to all pharmacies
+    # Send notification ONCE to all pharmacies
     sent_count = 0
     if photo_file_id:
         await msg.reply_text(
@@ -1613,7 +1674,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
         )
         for chat_id in target_chats:
             try:
-                # ✅ Save with photo_file_id
+                # Save with photo_file_id
                 save_result = save_pharmacy_request(chat_id, user.id, medicine_name, photo_file_id)
                 if not save_result:
                     logging.error(f"Failed to save request for pharmacy chat_id: {chat_id}")
@@ -1627,7 +1688,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
                 caption += f"🕐 ሰዓት: {order_time.strftime('%H:%M')}\n\n"
                 caption += f"⚡ **እባክዎ በፍጥነት ምላሽ ይስጡ!**"
                 
-                # ✅ Send photo to pharmacy
+                # Send photo to pharmacy
                 if is_doc:
                     await context.bot.send_document(chat_id=chat_id, document=photo_file_id, caption=caption, reply_markup=reply_markup)
                 else:
@@ -1642,7 +1703,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
         )
         for chat_id in target_chats:
             try:
-                # ✅ Save without photo
+                # Save without photo
                 save_result = save_pharmacy_request(chat_id, user.id, med_name)
                 if not save_result:
                     logging.error(f"Failed to save request for pharmacy chat_id: {chat_id}")
@@ -1663,7 +1724,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
             except Exception as e:
                 logging.error(f"Pharmacy notify error for {chat_id}: {e}")
 
-    # ✅ If no notifications were sent, inform user
+    # If no notifications were sent, inform user
     if sent_count == 0:
         await msg.reply_text(
             "❌ ጥያቄዎን ለማስተላለፍ አልተቻለም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
@@ -1714,7 +1775,7 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
             cursor = conn.cursor()
             placeholder = "%s" if DATABASE_URL else "?"
             
-            # ✅ Update order with price and status
+            # Update order with price and status
             cursor.execute(f"""
                 UPDATE pharmacy_responses 
                 SET price = {placeholder}, status = 'responded'
@@ -1723,7 +1784,7 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
             if DATABASE_URL:
                 conn.commit()
             
-            # ✅ Send response to customer
+            # Send response to customer
             await context.bot.send_message(
                 chat_id=int(customer_id),
                 text=f"🎉 የመድኃኒት መረጃ ተገኘ!\n\n"
@@ -2028,6 +2089,7 @@ def main():
 
     # Photo view callback
     app.add_handler(CallbackQueryHandler(view_photo_callback, pattern="^view_photo_"))
+    app.add_handler(CallbackQueryHandler(respond_from_photo_callback, pattern="^respond_from_photo_"))
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", admin_stats))
