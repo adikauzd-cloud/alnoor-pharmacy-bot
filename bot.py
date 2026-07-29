@@ -929,7 +929,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """📋 ለፋርማሲስቱ የታዘዙ መድኃኒቶች ማሳየት (ከታች አዲሱ ትዕዛዝ)"""
+    """📋 ለፋርማሲስቱ የታዘዙ መድኃኒቶች ማሳየት (አዲሱ ከላይ)"""
     
     pharmacy_chat_id = update.effective_user.id
     user_id = update.effective_user.id
@@ -1021,7 +1021,7 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ✅ Show each order (newest first)
     for idx, order in enumerate(all_orders, 1):
         order_id, customer_id, medicine_name, price, photo_file_id, response_time, status = order
-        time_str = response_time.strftime('%Y-%m-%d %H:%M') if hasattr(response_time, 'strftime') else str(response_time)
+        time_str = response_time.strftime('%Y-%m-%d %H:%M') if hasattr(response_time, 'strftime') else str(time_str)
         
         status_emoji = "⏳" if status == 'pending' else "✅" if status == 'responded' else "📦"
         status_text = "ምላሽ የሚጠብቅ" if status == 'pending' else "መልስ ተሰጥቷል" if status == 'responded' else "ተጠናቅቋል"
@@ -1043,7 +1043,7 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_admin:
             text += f"   👤 ደንበኛ: {customer_id}\n"
         
-        # ✅ Show respond button only for pending orders (ተስተካክሏል)
+        # ✅ Show respond button only for pending orders
         if status == 'pending':
             inline_keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("💊 መልስ ስጥ", callback_data=f"respond_order_{order_id}")]
@@ -1099,11 +1099,11 @@ async def view_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     photo_file_id, medicine_name, customer_id = result
     
-    # ✅ Store order info for response
+    # Store order info for response
     context.user_data["viewing_order_id"] = order_id
     context.user_data["viewing_customer_id"] = customer_id
     
-    # ✅ Show photo with response buttons
+    # Show photo with response buttons
     inline_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("💊 መልስ ስጥ", callback_data=f"respond_from_photo_{order_id}")]
     ])
@@ -1203,7 +1203,6 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
     
     customer_id, medicine_name, photo_file_id = order
     
-    # ✅ Store order info in context
     context.user_data["responding_order_id"] = order_id
     context.user_data["responding_customer_id"] = customer_id
     
@@ -1216,7 +1215,7 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
         f"✅ አለኝ ወይም ❌ የለኝም ብለው መመለስ ይችላሉ።"
     )
     
-    # ✅ If photo exists, show it with response options
+    # If photo exists, show it with response options
     if photo_file_id:
         try:
             await query.edit_message_text("📷 ፎቶውን እያየን ነው...")
@@ -1239,7 +1238,6 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=ReplyKeyboardMarkup([["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], resize_keyboard=True)
         )
     
-    # ✅ Return WAITING_FOR_PRICE to wait for price input
     return WAITING_FOR_PRICE
 
 async def show_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1762,7 +1760,8 @@ async def handle_pharmacy_response(update: Update, context: ContextTypes.DEFAULT
 async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if msg.text == "🏠 ወደ ዋና ገጽ":
-        return await start(update, context)
+        await start(update, context)
+        return ConversationHandler.END
 
     price_details = msg.text
     
@@ -1800,6 +1799,7 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
             )
             
+            # Clear context
             context.user_data.pop("responding_order_id", None)
             context.user_data.pop("responding_customer_id", None)
             
@@ -2062,10 +2062,23 @@ def main():
         fallbacks=[CommandHandler("start", start), MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)],
     )
 
+    # ✅ የተሻሻለው pharmacy_reply_conv
     pharmacy_reply_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(handle_pharmacy_response, pattern="^(available_|not_available_)")],
-        states={WAITING_FOR_PRICE: [MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start), MessageHandler(filters.TEXT & ~filters.COMMAND, receive_price_details)]},
-        fallbacks=[CommandHandler("start", start), MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)],
+        entry_points=[
+            CallbackQueryHandler(handle_pharmacy_response, pattern="^(available_|not_available_)"),
+            CallbackQueryHandler(respond_order_callback, pattern="^respond_order_"),
+            CallbackQueryHandler(respond_from_photo_callback, pattern="^respond_from_photo_")
+        ],
+        states={
+            WAITING_FOR_PRICE: [
+                MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_price_details)
+            ]
+        },
+        fallbacks=[
+            CommandHandler("start", start),
+            MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)
+        ],
         per_message=False,
     )
 
@@ -2081,17 +2094,8 @@ def main():
         fallbacks=[CommandHandler("start", start), MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)],
     )
 
-    # Order response conversation
-    order_response_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(respond_order_callback, pattern="^respond_order_")],
-        states={WAITING_FOR_PRICE: [MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start), MessageHandler(filters.TEXT & ~filters.COMMAND, receive_price_details)]},
-        fallbacks=[CommandHandler("start", start), MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)],
-        per_message=False,
-    )
-
     # Photo view callback
     app.add_handler(CallbackQueryHandler(view_photo_callback, pattern="^view_photo_"))
-    app.add_handler(CallbackQueryHandler(respond_from_photo_callback, pattern="^respond_from_photo_"))
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", admin_stats))
@@ -2102,7 +2106,6 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_admin_approval, pattern="^verify_"))
     app.add_handler(CallbackQueryHandler(translate_callback, pattern="^(translate_amharic|go_home)$"))
     app.add_handler(CallbackQueryHandler(show_english_callback, pattern="^show_english$"))
-    app.add_handler(order_response_conv)
 
     app.add_handler(loc_conv)
     app.add_handler(search_conv)
