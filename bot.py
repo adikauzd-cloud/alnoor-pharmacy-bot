@@ -1092,90 +1092,133 @@ async def view_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         logging.error(f"Error sending photo: {e}")
         await query.edit_message_text("❌ ፎቶውን መላክ አልተቻለም።")
 
-async def respond_from_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """📷 ከፎቶ ሲታይ መልስ ለመስጠት"""
-    
-    query = update.callback_query
-    await query.answer()
-    
-    order_id = int(query.data.split("_")[2])
-    order = get_order_by_id(order_id)
-    
-    if not order:
-        await query.edit_message_text("❌ ይህ ትዕዛዝ አልተገኘም።")
-        return
-    
-    customer_id, medicine_name = order[2], order[3]  # customer_id, medicine_name
-    
-    context.user_data["responding_order_id"] = order_id
-    context.user_data["responding_customer_id"] = customer_id
-    
-    message = (
-        f"💊 **ለትዕዛዝ መልስ መስጠት**\n\n"
-        f"📋 መድኃኒት: {medicine_name}\n"
-        f"👤 ደንበኛ: {customer_id}\n\n"
-        f"✏️ እባክዎ የመድኃኒቱን ዋጋ እና ተጨማሪ መረጃ ያስገቡ።\n\n"
-        f"ምሳሌ: 150 ብር, አለኝ, ከሰአት በኋላ ይምጡ\n\n"
-        f"✅ አለኝ ወይም ❌ የለኝም ብለው መመለስ ይችላሉ።"
-    )
-    
-    await query.edit_message_text(
-        message,
-        reply_markup=ReplyKeyboardMarkup([["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], resize_keyboard=True)
-    )
-    
-    return WAITING_FOR_PRICE
-
 async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """💊 ለታዘዘ መድኃኒት መልስ ለመስጠት"""
     
     query = update.callback_query
     await query.answer()
     
-    order_id = int(query.data.split("_")[2])
-    order = get_order_by_id(order_id)
-    
-    if not order:
-        await query.edit_message_text("❌ ይህ ትዕዛዝ አልተገኘም።")
-        return
-    
-    customer_id, medicine_name, photo_file_id = order[2], order[3], order[5]
-    
-    context.user_data["responding_order_id"] = order_id
-    context.user_data["responding_customer_id"] = customer_id
-    
-    message = (
-        f"💊 **ለትዕዛዝ መልስ መስጠት**\n\n"
-        f"📋 መድኃኒት: {medicine_name}\n"
-        f"👤 ደንበኛ: {customer_id}\n\n"
-        f"✏️ እባክዎ የመድኃኒቱን ዋጋ እና ተጨማሪ መረጃ ያስገቡ።\n\n"
-        f"ምሳሌ: 150 ብር, አለኝ, ከሰአት በኋላ ይምጡ\n\n"
-        f"✅ አለኝ ወይም ❌ የለኝም ብለው መመለስ ይችላሉ።"
-    )
-    
-    if photo_file_id:
-        try:
-            await query.edit_message_text("📷 ፎቶውን እያየን ነው...")
-            await context.bot.send_photo(
-                chat_id=update.effective_user.id,
-                photo=photo_file_id,
-                caption=message,
-                reply_markup=ReplyKeyboardMarkup([["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], resize_keyboard=True)
-            )
-            await query.delete()
-        except Exception as e:
-            logging.error(f"Error sending photo with response: {e}")
+    try:
+        # Extract order_id from callback data
+        order_id = int(query.data.split("_")[2])
+        logging.info(f"Processing respond_order for order_id: {order_id}")
+        
+        # Get order details
+        order = get_order_by_id(order_id)
+        
+        if not order:
+            await query.edit_message_text("❌ ይህ ትዕዛዝ አልተገኘም።")
+            return
+        
+        # order structure: (id, pharmacy_id, customer_id, medicine_name, price, photo_file_id, response_time, status)
+        customer_id = order[2]
+        medicine_name = order[3]
+        photo_file_id = order[5]
+        
+        # Store in context for later use
+        context.user_data["responding_order_id"] = order_id
+        context.user_data["responding_customer_id"] = customer_id
+        
+        message = (
+            f"💊 **ለትዕዛዝ መልስ መስጠት**\n\n"
+            f"📋 መድኃኒት: {medicine_name}\n"
+            f"👤 ደንበኛ ID: {customer_id}\n\n"
+            f"✏️ እባክዎ የመድኃኒቱን ዋጋ እና ተጨማሪ መረጃ ያስገቡ።\n\n"
+            f"ምሳሌ: 150 ብር, አለኝ, ከሰአት በኋላ ይምጡ\n\n"
+            f"✅ አለኝ ወይም ❌ የለኝም ብለው መመለስ ይችላሉ።"
+        )
+        
+        # If photo exists, show it with response options
+        if photo_file_id:
+            try:
+                # First delete the callback message
+                await query.message.delete()
+                
+                # Send photo with caption
+                await context.bot.send_photo(
+                    chat_id=update.effective_user.id,
+                    photo=photo_file_id,
+                    caption=message,
+                    parse_mode="Markdown",
+                    reply_markup=ReplyKeyboardMarkup(
+                        [["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], 
+                        resize_keyboard=True
+                    )
+                )
+            except Exception as e:
+                logging.error(f"Error sending photo with response: {e}")
+                # If photo fails, just send text
+                await query.edit_message_text(
+                    message,
+                    parse_mode="Markdown",
+                    reply_markup=ReplyKeyboardMarkup(
+                        [["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], 
+                        resize_keyboard=True
+                    )
+                )
+        else:
             await query.edit_message_text(
                 message,
-                reply_markup=ReplyKeyboardMarkup([["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], resize_keyboard=True)
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(
+                    [["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], 
+                    resize_keyboard=True
+                )
             )
-    else:
+        
+        return WAITING_FOR_PRICE
+        
+    except Exception as e:
+        logging.error(f"Error in respond_order_callback: {e}")
+        await query.edit_message_text(f"❌ የሆነ ችግር ተፈጥሯል። እባክዎ እንደገና ይሞክሩ።")
+        return ConversationHandler.END
+
+async def respond_from_photo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """📷 ከፎቶ ሲታይ መልስ ለመስጠት"""
+    
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        order_id = int(query.data.split("_")[2])
+        logging.info(f"Processing respond_from_photo for order_id: {order_id}")
+        
+        order = get_order_by_id(order_id)
+        
+        if not order:
+            await query.edit_message_text("❌ ይህ ትዕዛዝ አልተገኘም።")
+            return
+        
+        customer_id = order[2]
+        medicine_name = order[3]
+        
+        context.user_data["responding_order_id"] = order_id
+        context.user_data["responding_customer_id"] = customer_id
+        
+        message = (
+            f"💊 **ለትዕዛዝ መልስ መስጠት**\n\n"
+            f"📋 መድኃኒት: {medicine_name}\n"
+            f"👤 ደንበኛ ID: {customer_id}\n\n"
+            f"✏️ እባክዎ የመድኃኒቱን ዋጋ እና ተጨማሪ መረጃ ያስገቡ።\n\n"
+            f"ምሳሌ: 150 ብር, አለኝ, ከሰአት በኋላ ይምጡ\n\n"
+            f"✅ አለኝ ወይም ❌ የለኝም ብለው መመለስ ይችላሉ።"
+        )
+        
         await query.edit_message_text(
             message,
-            reply_markup=ReplyKeyboardMarkup([["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], resize_keyboard=True)
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(
+                [["✅ አለኝ", "❌ የለኝም"], ["🏠 ወደ ዋና ገጽ"]], 
+                resize_keyboard=True
+            )
         )
-    
-    return WAITING_FOR_PRICE
+        
+        return WAITING_FOR_PRICE
+        
+    except Exception as e:
+        logging.error(f"Error in respond_from_photo_callback: {e}")
+        await query.edit_message_text(f"❌ የሆነ ችግር ተፈጥሯል። እባክዎ እንደገና ይሞክሩ።")
+        return ConversationHandler.END
 
 async def show_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """🔔 ማሳወቂያዎች ማሳየት (ለተጠቃሚዎች)"""
@@ -1781,7 +1824,12 @@ async def handle_pharmacy_response(update: Update, context: ContextTypes.DEFAULT
         return ConversationHandler.END
 
 async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Receive price details from pharmacy"""
     msg = update.message
+    
+    if not msg:
+        return ConversationHandler.END
+        
     if msg.text == "🏠 ወደ ዋና ገጽ":
         await start(update, context)
         return ConversationHandler.END
@@ -1792,13 +1840,72 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
     order_id = context.user_data.get("responding_order_id")
     customer_id = context.user_data.get("responding_customer_id")
     
+    logging.info(f"Received price details - order_id: {order_id}, customer_id: {customer_id}")
+    
     if order_id and customer_id:
-        # Update the specific order
-        success = update_order_status(order_id, 'responded', price_details)
-        
-        if success:
-            # Send response to customer
-            pharmacy_chat_id = update.effective_user.id
+        try:
+            # Update the specific order
+            success = update_order_status(order_id, 'responded', price_details)
+            
+            if success:
+                # Get pharmacy info
+                pharmacy_chat_id = update.effective_user.id
+                pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
+                pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
+                pharm_loc = pharm_info[1] if pharm_info else "ያልተጠቀሰ"
+                pharm_phone = pharm_info[2] if pharm_info else "ያልተጠቀሰ"
+                pharm_hours = pharm_info[3] if pharm_info and pharm_info[3] else "ያልተጠቀሰ"
+                
+                # Send response to customer
+                try:
+                    await context.bot.send_message(
+                        chat_id=int(customer_id),
+                        text=f"🎉 የመድኃኒት መረጃ ከ{pharm_name} ተገኘ!\n\n"
+                             f"🏥 ፋርማሲ፦ {pharm_name}\n"
+                             f"📍 አካባቢ፦ {pharm_loc}\n"
+                             f"📞 ስልክ፦ {pharm_phone}\n"
+                             f"🕒 የስራ ሰዓት፦ {pharm_hours}\n\n"
+                             f"💰 የዋጋ እና የዝርዝር መረጃ፦\n{price_details}",
+                        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+                    )
+                    
+                    await msg.reply_text(
+                        "✅ መልስዎ ለደንበኛው በስኬት ተልኳል!\n\n"
+                        "📋 ይህ ትዕዛዝ አሁን 'መልስ ተሰጥቷል' በሚለው ሁኔታ ላይ ነው።",
+                        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+                    )
+                except Exception as e:
+                    logging.error(f"Error sending to customer: {e}")
+                    await msg.reply_text(
+                        "✅ መልስዎ ተቀምጧል ነገር ግን ለደንበኛው መላክ አልተቻለም። አድሚኑን ያግኙ።",
+                        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+                    )
+            else:
+                await msg.reply_text(
+                    "❌ መልስዎን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ።",
+                    reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+                )
+            
+            # Clear context
+            context.user_data.pop("responding_order_id", None)
+            context.user_data.pop("responding_customer_id", None)
+            
+            return ConversationHandler.END
+            
+        except Exception as e:
+            logging.error(f"Error in receive_price_details: {e}")
+            await msg.reply_text(
+                f"❌ የሆነ ችግር ተፈጥሯል። እባክዎ እንደገና ይሞክሩ።",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+            return ConversationHandler.END
+    
+    # If no order_id (legacy flow)
+    customer_id = context.user_data.get("responding_customer_id")
+    
+    if customer_id:
+        try:
+            pharmacy_chat_id = msg.chat_id
             pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
             pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
             pharm_loc = pharm_info[1] if pharm_info else "ያልተጠቀሰ"
@@ -1817,19 +1924,18 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
             )
             
             await msg.reply_text(
-                "✅ መልስዎ ለደንበኛው በስኬት ተልኳል!\n\n"
-                "📋 ይህ ትዕዛዝ አሁን 'መልስ ተሰጥቷል' በሚለው ሁኔታ ላይ ነው።",
+                "✅ መልስዎ ለደንበኛው በስኬት ተልኳል!",
                 reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
             )
-        else:
-            await msg.reply_text("❌ መልስዎን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ።")
-        
-        # Clear context
-        context.user_data.pop("responding_order_id", None)
-        context.user_data.pop("responding_customer_id", None)
-        
-        return ConversationHandler.END
+        except Exception as e:
+            logging.error(f"Error in legacy flow: {e}")
+            await msg.reply_text(
+                "❌ መልስዎን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ።",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
     
+    context.user_data.pop("responding_customer_id", None)
+    return ConversationHandler.END
     # If no order_id, this is from the old flow - create new response
     customer_id = context.user_data.get("responding_customer_id")
     pharmacy_chat_id = msg.chat_id
