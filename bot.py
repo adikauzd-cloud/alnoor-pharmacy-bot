@@ -56,246 +56,301 @@ logging.basicConfig(
 )
 
 # ==============================================================================
-# 2. DATABASE INITIALIZATION
+# 2. DATABASE CONNECTION & INITIALIZATION
 # ==============================================================================
 
 def get_db_connection():
     if DATABASE_URL:
         db_url = DATABASE_URL.replace("postgres://", "postgresql://", 1) if DATABASE_URL.startswith("postgres://") else DATABASE_URL
-        return psycopg2.connect(db_url)
+        conn = psycopg2.connect(db_url)
+        conn.autocommit = True  # ✅ አውቶማቲክ ኮሚት ያንቃል
+        return conn
     else:
         import sqlite3
         return sqlite3.connect("pharmacy_bot.db")
 
 def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # Pharmacies table
-    if DATABASE_URL:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pharmacies (
-                id SERIAL PRIMARY KEY,
-                chat_id BIGINT NOT NULL,
-                name TEXT NOT NULL,
-                location TEXT NOT NULL,
-                phone TEXT NOT NULL,
-                operating_hours TEXT DEFAULT 'ያልተጠቀሰ',
-                license_photo TEXT,
-                is_verified INTEGER DEFAULT 0
-            )
-        """)
-    else:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pharmacies (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chat_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                location TEXT NOT NULL,
-                phone TEXT NOT NULL,
-                operating_hours TEXT DEFAULT 'ያልተጠቀሰ',
-                license_photo TEXT,
-                is_verified INTEGER DEFAULT 0
-            )
-        """)
-    
-    # Add latitude and longitude columns if they don't exist
+    conn = None
     try:
-        cursor.execute("ALTER TABLE pharmacies ADD COLUMN latitude REAL")
-        logging.info("✅ latitude column added")
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Pharmacies table
+        if DATABASE_URL:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS pharmacies (
+                    id SERIAL PRIMARY KEY,
+                    chat_id BIGINT NOT NULL,
+                    name TEXT NOT NULL,
+                    location TEXT NOT NULL,
+                    phone TEXT NOT NULL,
+                    operating_hours TEXT DEFAULT 'ያልተጠቀሰ',
+                    license_photo TEXT,
+                    is_verified INTEGER DEFAULT 0
+                )
+            """)
+        else:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS pharmacies (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    location TEXT NOT NULL,
+                    phone TEXT NOT NULL,
+                    operating_hours TEXT DEFAULT 'ያልተጠቀሰ',
+                    license_photo TEXT,
+                    is_verified INTEGER DEFAULT 0
+                )
+            """)
+        
+        # Add latitude and longitude columns if they don't exist
+        try:
+            cursor.execute("ALTER TABLE pharmacies ADD COLUMN latitude REAL")
+            logging.info("✅ latitude column added")
+        except Exception as e:
+            logging.info(f"latitude column already exists: {e}")
+        
+        try:
+            cursor.execute("ALTER TABLE pharmacies ADD COLUMN longitude REAL")
+            logging.info("✅ longitude column added")
+        except Exception as e:
+            logging.info(f"longitude column already exists: {e}")
+        
+        # Search history table
+        if DATABASE_URL:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS search_history (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    medicine_name TEXT NOT NULL,
+                    search_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    result_summary TEXT
+                )
+            """)
+        else:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS search_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    medicine_name TEXT NOT NULL,
+                    search_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    result_summary TEXT
+                )
+            """)
+        
+        # AI logs table
+        if DATABASE_URL:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ai_logs (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    request_type TEXT,
+                    request_data TEXT,
+                    response_data TEXT,
+                    status_code INTEGER,
+                    error_message TEXT,
+                    response_time REAL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        else:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ai_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    request_type TEXT,
+                    request_data TEXT,
+                    response_data TEXT,
+                    status_code INTEGER,
+                    error_message TEXT,
+                    response_time REAL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        
+        # Pharmacy responses table
+        if DATABASE_URL:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS pharmacy_responses (
+                    id SERIAL PRIMARY KEY,
+                    pharmacy_id INTEGER NOT NULL,
+                    customer_id BIGINT NOT NULL,
+                    medicine_name TEXT NOT NULL,
+                    price TEXT,
+                    response_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        else:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS pharmacy_responses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    pharmacy_id INTEGER NOT NULL,
+                    customer_id INTEGER NOT NULL,
+                    medicine_name TEXT NOT NULL,
+                    price TEXT,
+                    response_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        
+        # Notifications table
+        if DATABASE_URL:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS notifications (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    pharmacy_id INTEGER,
+                    type TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    is_read BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        else:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS notifications (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    pharmacy_id INTEGER,
+                    type TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    is_read BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        
+        if DATABASE_URL:
+            conn.commit()
+        logging.info("✅ Database initialized successfully")
+        
     except Exception as e:
-        logging.info(f"latitude column already exists or error: {e}")
-    
-    try:
-        cursor.execute("ALTER TABLE pharmacies ADD COLUMN longitude REAL")
-        logging.info("✅ longitude column added")
-    except Exception as e:
-        logging.info(f"longitude column already exists or error: {e}")
-    
-    # Search history table
-    if DATABASE_URL:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS search_history (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT NOT NULL,
-                medicine_name TEXT NOT NULL,
-                search_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                result_summary TEXT
-            )
-        """)
-    else:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS search_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                medicine_name TEXT NOT NULL,
-                search_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                result_summary TEXT
-            )
-        """)
-    
-    # AI logs table
-    if DATABASE_URL:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS ai_logs (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                request_type TEXT,
-                request_data TEXT,
-                response_data TEXT,
-                status_code INTEGER,
-                error_message TEXT,
-                response_time REAL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    else:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS ai_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                request_type TEXT,
-                request_data TEXT,
-                response_data TEXT,
-                status_code INTEGER,
-                error_message TEXT,
-                response_time REAL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    
-    # Pharmacy responses table
-    if DATABASE_URL:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pharmacy_responses (
-                id SERIAL PRIMARY KEY,
-                pharmacy_id INTEGER NOT NULL,
-                customer_id BIGINT NOT NULL,
-                medicine_name TEXT NOT NULL,
-                price TEXT,
-                response_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    else:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pharmacy_responses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                pharmacy_id INTEGER NOT NULL,
-                customer_id INTEGER NOT NULL,
-                medicine_name TEXT NOT NULL,
-                price TEXT,
-                response_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    
-    # Notifications table
-    if DATABASE_URL:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS notifications (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT NOT NULL,
-                pharmacy_id INTEGER,
-                type TEXT NOT NULL,
-                message TEXT NOT NULL,
-                is_read BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    else:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS notifications (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                pharmacy_id INTEGER,
-                type TEXT NOT NULL,
-                message TEXT NOT NULL,
-                is_read BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    
-    conn.commit()
-    conn.close()
-    logging.info("✅ Database initialized successfully")
+        logging.error(f"Database initialization error: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
 
 # ==============================================================================
-# 3. DATABASE HELPER FUNCTIONS
+# 3. DATABASE HELPER FUNCTIONS (የተሻሻሉ - Rollback ጋር)
 # ==============================================================================
 
 def register_pharmacy_db(chat_id, name, location, phone, operating_hours, license_photo, lat=None, lon=None):
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    conn = None
     try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        try:
+            if DATABASE_URL:
+                cursor.execute("""
+                    INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified, latitude, longitude)
+                    VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s) RETURNING id
+                """, (chat_id, name, location, phone, operating_hours, license_photo, lat, lon))
+                pharmacy_id = cursor.fetchone()[0]
+            else:
+                cursor.execute("""
+                    INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified, latitude, longitude)
+                    VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+                """, (chat_id, name, location, phone, operating_hours, license_photo, lat, lon))
+                pharmacy_id = cursor.lastrowid
+        except Exception as e:
+            logging.warning(f"Inserting without latitude/longitude: {e}")
+            if DATABASE_URL:
+                cursor.execute("""
+                    INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified)
+                    VALUES (%s, %s, %s, %s, %s, %s, 0) RETURNING id
+                """, (chat_id, name, location, phone, operating_hours, license_photo))
+                pharmacy_id = cursor.fetchone()[0]
+            else:
+                cursor.execute("""
+                    INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified)
+                    VALUES (?, ?, ?, ?, ?, ?, 0)
+                """, (chat_id, name, location, phone, operating_hours, license_photo))
+                pharmacy_id = cursor.lastrowid
+        
         if DATABASE_URL:
-            cursor.execute("""
-                INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified, latitude, longitude)
-                VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s) RETURNING id
-            """, (chat_id, name, location, phone, operating_hours, license_photo, lat, lon))
-            pharmacy_id = cursor.fetchone()[0]
-        else:
-            cursor.execute("""
-                INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified, latitude, longitude)
-                VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
-            """, (chat_id, name, location, phone, operating_hours, license_photo, lat, lon))
-            pharmacy_id = cursor.lastrowid
+            conn.commit()
+        return pharmacy_id
     except Exception as e:
-        logging.warning(f"Inserting without latitude/longitude: {e}")
-        if DATABASE_URL:
-            cursor.execute("""
-                INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified)
-                VALUES (%s, %s, %s, %s, %s, %s, 0) RETURNING id
-            """, (chat_id, name, location, phone, operating_hours, license_photo))
-            pharmacy_id = cursor.fetchone()[0]
-        else:
-            cursor.execute("""
-                INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified)
-                VALUES (?, ?, ?, ?, ?, ?, 0)
-            """, (chat_id, name, location, phone, operating_hours, license_photo))
-            pharmacy_id = cursor.lastrowid
-    
-    conn.commit()
-    conn.close()
-    return pharmacy_id
+        if conn:
+            conn.rollback()
+        logging.error(f"Register pharmacy error: {e}")
+        raise e
+    finally:
+        if conn:
+            conn.close()
 
 def verify_pharmacy_db(pharmacy_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    placeholder = "%s" if DATABASE_URL else "?"
-    cursor.execute(f"UPDATE pharmacies SET is_verified = 1 WHERE id = {placeholder}", (pharmacy_id,))
-    conn.commit()
-    conn.close()
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"UPDATE pharmacies SET is_verified = 1 WHERE id = {placeholder}", (pharmacy_id,))
+        if DATABASE_URL:
+            conn.commit()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logging.error(f"Verify pharmacy error: {e}")
+        raise e
+    finally:
+        if conn:
+            conn.close()
 
 def get_pharmacy_info_by_id(pharmacy_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    placeholder = "%s" if DATABASE_URL else "?"
-    cursor.execute(f"SELECT name, location, phone, chat_id, operating_hours FROM pharmacies WHERE id = {placeholder}", (pharmacy_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return row
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"SELECT name, location, phone, chat_id, operating_hours FROM pharmacies WHERE id = {placeholder}", (pharmacy_id,))
+        row = cursor.fetchone()
+        return row
+    except Exception as e:
+        logging.error(f"Get pharmacy by ID error: {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
 
 def get_pharmacy_info_by_chat_id(chat_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    placeholder = "%s" if DATABASE_URL else "?"
-    cursor.execute(f"SELECT name, location, phone, operating_hours FROM pharmacies WHERE chat_id = {placeholder} ORDER BY id DESC LIMIT 1", (chat_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return row
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"SELECT name, location, phone, operating_hours FROM pharmacies WHERE chat_id = {placeholder} ORDER BY id DESC LIMIT 1", (chat_id,))
+        row = cursor.fetchone()
+        return row
+    except Exception as e:
+        logging.error(f"Get pharmacy by chat ID error: {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
 
 def get_verified_pharmacies_by_location(location=None):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    if location:
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"SELECT chat_id FROM pharmacies WHERE is_verified = 1 AND LOWER(location) LIKE LOWER({placeholder})", (f"%{location}%",))
-    else:
-        cursor.execute("SELECT chat_id FROM pharmacies WHERE is_verified = 1")
-    rows = cursor.fetchall()
-    conn.close()
-    return list(set([r[0] for r in rows]))
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        if location:
+            placeholder = "%s" if DATABASE_URL else "?"
+            cursor.execute(f"SELECT chat_id FROM pharmacies WHERE is_verified = 1 AND LOWER(location) LIKE LOWER({placeholder})", (f"%{location}%",))
+        else:
+            cursor.execute("SELECT chat_id FROM pharmacies WHERE is_verified = 1")
+        rows = cursor.fetchall()
+        return list(set([r[0] for r in rows]))
+    except Exception as e:
+        logging.error(f"Get verified pharmacies by location error: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
 
 def get_all_verified_pharmacies():
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -304,29 +359,39 @@ def get_all_verified_pharmacies():
         except:
             cursor.execute("SELECT id, name, location, phone, operating_hours FROM pharmacies WHERE is_verified = 1")
         rows = cursor.fetchall()
-        conn.close()
         return rows
     except Exception as e:
         logging.error(f"Get all pharmacies error: {e}")
         return []
+    finally:
+        if conn:
+            conn.close()
 
 def get_bot_statistics():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM pharmacies")
-    total = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM pharmacies WHERE is_verified = 1")
-    verified = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM pharmacies WHERE is_verified = 0")
-    pending = cursor.fetchone()[0]
-    conn.close()
-    return total, verified, pending
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM pharmacies")
+        total = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM pharmacies WHERE is_verified = 1")
+        verified = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM pharmacies WHERE is_verified = 0")
+        pending = cursor.fetchone()[0]
+        return total, verified, pending
+    except Exception as e:
+        logging.error(f"Get bot statistics error: {e}")
+        return 0, 0, 0
+    finally:
+        if conn:
+            conn.close()
 
 # ==============================================================================
 # 4. SEARCH HISTORY FUNCTIONS
 # ==============================================================================
 
 def save_search_history(user_id, medicine_name, result_summary=""):
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -335,12 +400,18 @@ def save_search_history(user_id, medicine_name, result_summary=""):
             INSERT INTO search_history (user_id, medicine_name, result_summary)
             VALUES ({placeholder}, {placeholder}, {placeholder})
         """, (user_id, medicine_name, result_summary[:500] if result_summary else ""))
-        conn.commit()
-        conn.close()
+        if DATABASE_URL:
+            conn.commit()
     except Exception as e:
+        if conn:
+            conn.rollback()
         logging.error(f"Save search history error: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 def get_user_search_history(user_id, limit=10):
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -350,13 +421,16 @@ def get_user_search_history(user_id, limit=10):
             WHERE user_id = {placeholder} ORDER BY search_date DESC LIMIT {placeholder}
         """, (user_id, limit))
         rows = cursor.fetchall()
-        conn.close()
         return rows
     except Exception as e:
         logging.error(f"Get search history error: {e}")
         return []
+    finally:
+        if conn:
+            conn.close()
 
 def get_top_medicines(limit=10):
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -374,17 +448,20 @@ def get_top_medicines(limit=10):
             LIMIT ?
         """, (limit,))
         rows = cursor.fetchall()
-        conn.close()
         return rows
     except Exception as e:
         logging.error(f"Get top medicines error: {e}")
         return []
+    finally:
+        if conn:
+            conn.close()
 
 # ==============================================================================
 # 5. AI LOGS FUNCTIONS
 # ==============================================================================
 
 def log_ai_request(user_id, request_type, request_data, response_data, status_code, response_time, error=None):
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -394,12 +471,18 @@ def log_ai_request(user_id, request_type, request_data, response_data, status_co
             (user_id, request_type, request_data, response_data, status_code, error_message, response_time)
             VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
         """, (user_id, request_type, json.dumps(request_data)[:500], json.dumps(response_data)[:500], status_code, error, response_time))
-        conn.commit()
-        conn.close()
+        if DATABASE_URL:
+            conn.commit()
     except Exception as e:
+        if conn:
+            conn.rollback()
         logging.error(f"Log AI request error: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 def get_ai_stats():
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -411,11 +494,13 @@ def get_ai_stats():
         errors = cursor.fetchone()[0]
         cursor.execute("SELECT AVG(response_time) FROM ai_logs")
         avg_time = cursor.fetchone()[0] or 0
-        conn.close()
         return {'total': total, 'successful': successful, 'errors': errors, 'avg_time': round(avg_time, 2)}
     except Exception as e:
         logging.error(f"Get AI stats error: {e}")
         return {'total': 0, 'successful': 0, 'errors': 0, 'avg_time': 0}
+    finally:
+        if conn:
+            conn.close()
 
 # ==============================================================================
 # 6. DISTANCE CALCULATION AND TOP PHARMACIES
@@ -435,6 +520,7 @@ def calculate_distance(lat1, lon1, lat2, lon2):
         return None
 
 def get_top_pharmacies(limit=10):
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -456,17 +542,20 @@ def get_top_pharmacies(limit=10):
             LIMIT ?
         """, (limit,))
         rows = cursor.fetchall()
-        conn.close()
         return rows
     except Exception as e:
         logging.error(f"Get top pharmacies error: {e}")
         return []
+    finally:
+        if conn:
+            conn.close()
 
 # ==============================================================================
 # 7. NOTIFICATION SYSTEM
 # ==============================================================================
 
 def save_notification(user_id, pharmacy_id, notification_type, message):
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -475,14 +564,20 @@ def save_notification(user_id, pharmacy_id, notification_type, message):
             INSERT INTO notifications (user_id, pharmacy_id, type, message)
             VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder})
         """, (user_id, pharmacy_id, notification_type, message))
-        conn.commit()
-        conn.close()
+        if DATABASE_URL:
+            conn.commit()
         return True
     except Exception as e:
+        if conn:
+            conn.rollback()
         logging.error(f"Save notification error: {e}")
         return False
+    finally:
+        if conn:
+            conn.close()
 
 def get_notifications(user_id, limit=10):
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -493,37 +588,48 @@ def get_notifications(user_id, limit=10):
             ORDER BY created_at DESC LIMIT {placeholder}
         """, (user_id, limit))
         rows = cursor.fetchall()
-        conn.close()
         return rows
     except Exception as e:
         logging.error(f"Get notifications error: {e}")
         return []
+    finally:
+        if conn:
+            conn.close()
 
 def mark_notification_read(notification_id):
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         placeholder = "%s" if DATABASE_URL else "?"
         cursor.execute(f"UPDATE notifications SET is_read = TRUE WHERE id = {placeholder}", (notification_id,))
-        conn.commit()
-        conn.close()
+        if DATABASE_URL:
+            conn.commit()
         return True
     except Exception as e:
+        if conn:
+            conn.rollback()
         logging.error(f"Mark notification read error: {e}")
         return False
+    finally:
+        if conn:
+            conn.close()
 
 def get_unread_notification_count(user_id):
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         placeholder = "%s" if DATABASE_URL else "?"
         cursor.execute(f"SELECT COUNT(*) FROM notifications WHERE user_id = {placeholder} AND is_read = FALSE", (user_id,))
         count = cursor.fetchone()[0]
-        conn.close()
         return count
     except Exception as e:
         logging.error(f"Get unread count error: {e}")
         return 0
+    finally:
+        if conn:
+            conn.close()
 
 async def send_telegram_notification(context, user_id, message):
     try:
@@ -745,6 +851,7 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     pharmacy_chat_id = update.effective_user.id
     
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -757,10 +864,12 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ORDER BY response_time DESC
         """, (pharmacy_chat_id,))
         pending_orders = cursor.fetchall()
-        conn.close()
     except Exception as e:
         logging.error(f"Error getting pending orders: {e}")
         pending_orders = []
+    finally:
+        if conn:
+            conn.close()
     
     if not pending_orders:
         await update.message.reply_text(
@@ -805,6 +914,7 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
     
     order_id = int(query.data.split("_")[2])
     
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -814,11 +924,13 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
             WHERE id = {placeholder}
         """, (order_id,))
         order = cursor.fetchone()
-        conn.close()
     except Exception as e:
         logging.error(f"Error getting order: {e}")
         await query.edit_message_text("❌ የትዕዛዝ መረጃ ማግኘት አልተቻለም።")
         return
+    finally:
+        if conn:
+            conn.close()
     
     if not order:
         await query.edit_message_text("❌ ይህ ትዕዛዝ አልተገኘም።")
@@ -1326,6 +1438,7 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
     customer_id = context.user_data.get("responding_customer_id")
     
     if order_id and customer_id:
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -1335,8 +1448,8 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
                 SET price = {placeholder} 
                 WHERE id = {placeholder}
             """, (price_details, order_id))
-            conn.commit()
-            conn.close()
+            if DATABASE_URL:
+                conn.commit()
             
             await context.bot.send_message(
                 chat_id=int(customer_id),
@@ -1354,8 +1467,13 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
             context.user_data.pop("responding_customer_id", None)
             
         except Exception as e:
+            if conn:
+                conn.rollback()
             logging.error(f"Error updating order: {e}")
             await msg.reply_text("❌ መልስዎን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ።")
+        finally:
+            if conn:
+                conn.close()
         
         return ConversationHandler.END
     
@@ -1369,6 +1487,7 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
     pharm_phone = pharm_info[2] if pharm_info else "ያልተጠቀሰ"
     pharm_hours = pharm_info[3] if pharm_info and pharm_info[3] else "ያልተጠቀሰ"
 
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -1377,10 +1496,15 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
             INSERT INTO pharmacy_responses (pharmacy_id, customer_id, medicine_name, price)
             VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder})
         """, (pharmacy_chat_id, customer_id, price_details[:50], price_details))
-        conn.commit()
-        conn.close()
+        if DATABASE_URL:
+            conn.commit()
     except Exception as e:
+        if conn:
+            conn.rollback()
         logging.error(f"Save pharmacy response error: {e}")
+    finally:
+        if conn:
+            conn.close()
 
     await msg.reply_text("✅ ዋጋው እና መረጃው ለደንበኛው በስኬት ተልኳል!", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
 
