@@ -795,7 +795,7 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(f"📋 **የታዘዙ መድኃኒቶች**\n━━━━━━━━━━━━━━━━━━━━━━━\n🔔 ጠቅላላ: {len(all_orders)} ጥያቄዎች\n⏳ ምላሽ የሚጠብቁ: {pending}\n✅ መልስ የተሰጠ: {responded}\n📦 የተጠናቀቀ: {completed}\n\n💡 ለመድኃኒት መልስ ለመስጠት '💊 መልስ ስጥ' የሚለውን ይጫኑ።", parse_mode="Markdown", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
     
-    # Show orders from newest to oldest (በቅድሚያ አዲሱን አሳይ)
+    # Show orders from newest to oldest
     for idx, order in enumerate(all_orders, 1):
         order_id, customer_id, medicine_name, price, photo_file_id, response_time, status = order
         time_str = response_time.strftime('%Y-%m-%d %H:%M') if hasattr(response_time, 'strftime') else str(response_time)
@@ -1176,6 +1176,8 @@ async def handle_pharmacy_response(update: Update, context):
     action = parts[0]  # "available" or "not_available"
     order_id = int(parts[1])
     
+    logging.info(f"🔔 Pharmacy response: {action} for order {order_id}")
+    
     # Get order details
     order = get_order_details_with_pharmacy(order_id)
     if not order:
@@ -1192,10 +1194,11 @@ async def handle_pharmacy_response(update: Update, context):
         # Show photo if available
         if photo_file_id:
             try:
-                await query.edit_message_text("📷 ፎቶውን እያየን ነው...")
+                # Try to send the photo with the prompt
                 keyboard = ReplyKeyboardMarkup([
                     ["🏠 ወደ ዋና ገጽ"]
                 ], resize_keyboard=True)
+                
                 await context.bot.send_photo(
                     chat_id=update.effective_user.id,
                     photo=photo_file_id,
@@ -1205,6 +1208,7 @@ async def handle_pharmacy_response(update: Update, context):
                 await query.delete()
             except Exception as e:
                 logging.error(f"Error sending photo: {e}")
+                # Fallback to text only
                 await query.edit_message_text(
                     "✅ 'መድኃኒቱ አለኝ' የሚለው ምላሽዎ ተመዝግቧል!\n\n✏️ እባክዎ የመድኃኒቱን ዋጋ እና ተጨማሪ መረጃ ያስገቡ።",
                     reply_markup=ReplyKeyboardMarkup([["🏠 ወደ ዋና ገጽ"]], resize_keyboard=True)
@@ -1502,6 +1506,15 @@ async def show_help(update: Update, context):
 
 async def error_handler_func(update: object, context: ContextTypes.DEFAULT_TYPE):
     logging.error(msg="Exception while handling an update:", exc_info=context.error)
+    # Try to notify the user
+    if update and hasattr(update, 'effective_chat'):
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="❌ አንድ ስህተት ተከስቷል። እባክዎ እንደገና ይሞክሩ ወይም እገዛን ያግኙ።"
+            )
+        except:
+            pass
 
 if __name__ == "__main__":
     main()
