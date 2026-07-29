@@ -1544,6 +1544,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
     if not msg:
         return ConversationHandler.END
 
+    # ✅ Check for menu buttons first
     if msg.text:
         menu_buttons = [
             "🔍 መድኃኒት ፈልግ",
@@ -1603,6 +1604,8 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
 
     loc_tag = f" (አካባቢ፦ {user_loc})" if user_loc else ""
 
+    # ✅ Send notification ONCE to all pharmacies
+    sent_count = 0
     if photo_file_id:
         await msg.reply_text(
             f"✅ የሐኪም ማዘዣ ፎቶዎ ተቀብለናል! ለ{len(target_chats)} ሕጋዊ ፋርማሲዎች ጥያቄው ተልኳል።{loc_tag}",
@@ -1614,7 +1617,9 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
                 save_result = save_pharmacy_request(chat_id, user.id, medicine_name, photo_file_id)
                 if not save_result:
                     logging.error(f"Failed to save request for pharmacy chat_id: {chat_id}")
+                    continue
                 
+                sent_count += 1
                 caption = f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ (በፎቶ)!**\n"
                 caption += f"👤 ከደንበኛ፡ {user.first_name}\n"
                 caption += f"📍 አካባቢ፡ {user_loc if user_loc else 'ያልተመረጠ'}\n"
@@ -1641,7 +1646,9 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
                 save_result = save_pharmacy_request(chat_id, user.id, med_name)
                 if not save_result:
                     logging.error(f"Failed to save request for pharmacy chat_id: {chat_id}")
+                    continue
                 
+                sent_count += 1
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=f"🔔 **አዲስ የመድኃኒት ፍለጋ ጥያቄ!**\n"
@@ -1655,6 +1662,13 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
                 )
             except Exception as e:
                 logging.error(f"Pharmacy notify error for {chat_id}: {e}")
+
+    # ✅ If no notifications were sent, inform user
+    if sent_count == 0:
+        await msg.reply_text(
+            "❌ ጥያቄዎን ለማስተላለፍ አልተቻለም። እባክዎ ትንሽ ቆይተው እንደገና ይሞክሩ።",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
 
     return ConversationHandler.END
 
