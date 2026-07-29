@@ -99,7 +99,7 @@ def init_db():
             )
         """)
     
-    # ✅ Add latitude and longitude columns if they don't exist
+    # Add latitude and longitude columns if they don't exist
     try:
         cursor.execute("ALTER TABLE pharmacies ADD COLUMN latitude REAL")
         logging.info("✅ latitude column added")
@@ -226,7 +226,6 @@ def register_pharmacy_db(chat_id, name, location, phone, operating_hours, licens
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        # ✅ Try with latitude and longitude
         if DATABASE_URL:
             cursor.execute("""
                 INSERT INTO pharmacies (chat_id, name, location, phone, operating_hours, license_photo, is_verified, latitude, longitude)
@@ -240,7 +239,6 @@ def register_pharmacy_db(chat_id, name, location, phone, operating_hours, licens
             """, (chat_id, name, location, phone, operating_hours, license_photo, lat, lon))
             pharmacy_id = cursor.lastrowid
     except Exception as e:
-        # ✅ If latitude/longitude columns don't exist, insert without them
         logging.warning(f"Inserting without latitude/longitude: {e}")
         if DATABASE_URL:
             cursor.execute("""
@@ -569,7 +567,7 @@ REG_LICENSE = 13
 MAIN_KEYBOARD = [
     ["🔍 መድኃኒት ፈልግ", "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ"],
     ["📍 አካባቢ ምረጥ", "📋 የፋርማሲዎች ዝርዝር"],
-    ["🏥 ፋርማሲ መዝግብ", "🔔 ማሳወቂያዎች"],
+    ["🏥 ፋርማሲ መዝግብ", "📋 የታዘዙ መድኃኒቶች"],
     ["📞 እገዛ / ድጋፍ", "🏠 ወደ ዋና ገጽ"]
 ]
 
@@ -742,7 +740,108 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     return ConversationHandler.END
 
+async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """📋 ለፋርማሲስቱ ያልተመለሱ የታዘዙ መድኃኒቶች ማሳየት"""
+    
+    pharmacy_chat_id = update.effective_user.id
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"""
+            SELECT id, customer_id, medicine_name, price, response_time
+            FROM pharmacy_responses 
+            WHERE pharmacy_id = {placeholder} 
+            AND price IS NULL
+            ORDER BY response_time DESC
+        """, (pharmacy_chat_id,))
+        pending_orders = cursor.fetchall()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Error getting pending orders: {e}")
+        pending_orders = []
+    
+    if not pending_orders:
+        await update.message.reply_text(
+            "📋 በአሁኑ ሰዓት ምንም ያልተመለሱ የታዘዙ መድኃኒቶች የሉም።\n\n"
+            "✅ ሁሉም ጥያቄዎች መልስ አግኝተዋል።",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        return
+    
+    await update.message.reply_text(
+        f"📋 **ያልተመለሱ የታዘዙ መድኃኒቶች**\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔔 ጠቅላላ: {len(pending_orders)} ጥያቄዎች\n\n"
+        f"💡 ለመድኃኒት መልስ ለመስጠት ከታች ያለውን ቁልፍ ይጫኑ።",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+    )
+    
+    for idx, order in enumerate(pending_orders, 1):
+        order_id, customer_id, medicine_name, price, response_time = order
+        time_str = response_time.strftime('%Y-%m-%d %H:%M') if hasattr(response_time, 'strftime') else str(response_time)
+        
+        text = f"**{idx}. {medicine_name}**\n"
+        text += f"   👤 ደንበኛ: {customer_id}\n"
+        text += f"   📅 የታዘዘበት: {time_str}\n"
+        
+        inline_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💊 መልስ ስጥ", callback_data=f"respond_order_{order_id}")]
+        ])
+        
+        await update.message.reply_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=inline_keyboard
+        )
+
+async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """💊 ለታዘዘ መድኃኒት መልስ ለመስጠት"""
+    
+    query = update.callback_query
+    await query.answer()
+    
+    order_id = int(query.data.split("_")[2])
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"""
+            SELECT customer_id, medicine_name FROM pharmacy_responses 
+            WHERE id = {placeholder}
+        """, (order_id,))
+        order = cursor.fetchone()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Error getting order: {e}")
+        await query.edit_message_text("❌ የትዕዛዝ መረጃ ማግኘት አልተቻለም።")
+        return
+    
+    if not order:
+        await query.edit_message_text("❌ ይህ ትዕዛዝ አልተገኘም።")
+        return
+    
+    customer_id, medicine_name = order
+    
+    context.user_data["responding_order_id"] = order_id
+    context.user_data["responding_customer_id"] = customer_id
+    
+    await query.edit_message_text(
+        f"💊 **ለትዕዛዝ መልስ መስጠት**\n\n"
+        f"📋 መድኃኒት: {medicine_name}\n"
+        f"👤 ደንበኛ: {customer_id}\n\n"
+        f"✏️ እባክዎ የመድኃኒቱን ዋጋ እና ተጨማሪ መረጃ ያስገቡ።\n\n"
+        f"ምሳሌ: 150 ብር, አለኝ, ከሰአት በኋላ ይምጡ",
+        reply_markup=ReplyKeyboardMarkup([["🏠 ወደ ዋና ገጽ"]], resize_keyboard=True)
+    )
+    
+    return WAITING_FOR_PRICE
+
 async def show_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🔔 ማሳወቂያዎች ማሳየት (ለተጠቃሚዎች)"""
     user_id = update.effective_user.id
     notifications = get_notifications(user_id, 10)
     
@@ -1113,7 +1212,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
             "📍 አካባቢ ምረጥ",
             "📋 የፋርማሲዎች ዝርዝር",
             "🏥 ፋርማሲ መዝግብ",
-            "🔔 ማሳወቂያዎች",
+            "📋 የታዘዙ መድኃኒቶች",
             "📞 እገዛ / ድጋፍ",
             "🏠 ወደ ዋና ገጽ"
         ]
@@ -1121,8 +1220,8 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
         if msg.text in menu_buttons:
             if msg.text == "🔍 መድኃኒት ፈልግ":
                 return await prompt_search(update, context)
-            elif msg.text == "🔔 ማሳወቂያዎች":
-                return await show_notifications(update, context)
+            elif msg.text == "📋 የታዘዙ መድኃኒቶች":
+                return await show_orders(update, context)
             else:
                 await start(update, context)
                 return ConversationHandler.END
@@ -1221,6 +1320,46 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
         return await start(update, context)
 
     price_details = msg.text
+    
+    # Check if this is a response to an order
+    order_id = context.user_data.get("responding_order_id")
+    customer_id = context.user_data.get("responding_customer_id")
+    
+    if order_id and customer_id:
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            placeholder = "%s" if DATABASE_URL else "?"
+            cursor.execute(f"""
+                UPDATE pharmacy_responses 
+                SET price = {placeholder} 
+                WHERE id = {placeholder}
+            """, (price_details, order_id))
+            conn.commit()
+            conn.close()
+            
+            await context.bot.send_message(
+                chat_id=int(customer_id),
+                text=f"🎉 የመድኃኒት መረጃ ተገኘ!\n\n"
+                     f"💰 የዋጋ እና የዝርዝር መረጃ፦\n{price_details}",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+            
+            await msg.reply_text(
+                "✅ መልስዎ ለደንበኛው በስኬት ተልኳል!",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+            
+            context.user_data.pop("responding_order_id", None)
+            context.user_data.pop("responding_customer_id", None)
+            
+        except Exception as e:
+            logging.error(f"Error updating order: {e}")
+            await msg.reply_text("❌ መልስዎን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ።")
+        
+        return ConversationHandler.END
+    
+    # Regular flow for pharmacy response (from callback)
     customer_id = context.chat_data.get("target_customer_id")
     pharmacy_chat_id = msg.chat_id
 
@@ -1481,15 +1620,24 @@ def main():
         fallbacks=[CommandHandler("start", start), MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)],
     )
 
+    # Order response conversation
+    order_response_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(respond_order_callback, pattern="^respond_order_")],
+        states={WAITING_FOR_PRICE: [MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start), MessageHandler(filters.TEXT & ~filters.COMMAND, receive_price_details)]},
+        fallbacks=[CommandHandler("start", start), MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)],
+        per_message=False,
+    )
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", admin_stats))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(MessageHandler(filters.Regex("^📞 እገዛ / ድጋፍ$"), show_help))
     app.add_handler(MessageHandler(filters.Regex("^📋 የፋርማሲዎች ዝርዝር$"), list_pharmacies))
-    app.add_handler(MessageHandler(filters.Regex("^🔔 ማሳወቂያዎች$"), show_notifications))
+    app.add_handler(MessageHandler(filters.Regex("^📋 የታዘዙ መድኃኒቶች$"), show_orders))
     app.add_handler(CallbackQueryHandler(handle_admin_approval, pattern="^verify_"))
     app.add_handler(CallbackQueryHandler(translate_callback, pattern="^(translate_amharic|go_home)$"))
     app.add_handler(CallbackQueryHandler(show_english_callback, pattern="^show_english$"))
+    app.add_handler(order_response_conv)
 
     app.add_handler(loc_conv)
     app.add_handler(search_conv)
