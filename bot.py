@@ -103,7 +103,6 @@ def init_db():
                 )
             """)
         
-        # Add latitude and longitude columns if they don't exist
         try:
             cursor.execute("ALTER TABLE pharmacies ADD COLUMN latitude REAL")
             logging.info("✅ latitude column added")
@@ -168,7 +167,7 @@ def init_db():
                 )
             """)
         
-        # Pharmacy responses table with BIGINT for pharmacy_id
+        # Pharmacy responses table
         if DATABASE_URL:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS pharmacy_responses (
@@ -194,7 +193,6 @@ def init_db():
                 )
             """)
         
-        # Add status column if it doesn't exist
         try:
             cursor.execute("ALTER TABLE pharmacy_responses ADD COLUMN status TEXT DEFAULT 'pending'")
             logging.info("✅ status column added")
@@ -259,7 +257,7 @@ def init_db():
                 )
             """)
         
-        # ✅ NEW: Pharmacy Stock table
+        # Pharmacy Stock table
         if DATABASE_URL:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS pharmacy_stock (
@@ -293,7 +291,7 @@ def init_db():
                 )
             """)
         
-        # ✅ NEW: Stock History table
+        # Stock History table
         if DATABASE_URL:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS stock_history (
@@ -1161,20 +1159,20 @@ LOCATION_KEYBOARD = [
     ["ቦሌ", "አራዳ", "አዲስ ከተማ"],
     ["የካ", "ቂርቆስ", "ልደታ"],
     ["ኮልፌ ቀራኒዮ", "ንፋስ ስልክ", "አቃቂ ቃሊቲ"],
-    ["🏠 ወደ ዋና ገጽ"]
+    ["🏠 ዋና ገጽ"]
 ]
 
 HOURS_KEYBOARD = [
     ["🕒 24 ሰዓት ክፍት"],
     ["☀️ በቀን ብቻ (ከጠዋቱ 2:00 - ማታ 2:00)"],
-    ["🏠 ወደ ዋና ገጽ"]
+    ["🏠 ዋና ገጽ"]
 ]
 
 STOCK_KEYBOARD = [
     ["📦 መድኃኒት ጨምር", "📊 ክምችት ማየት"],
     ["🔁 ክምችት አስተካክል", "⚠️ ዝቅተኛ ክምችት"],
     ["📋 የመድኃኒት ታሪክ", "🗑️ መድኃኒት ሰርዝ"],
-    ["🏠 ወደ ዋና ገጽ"]
+    ["🏠 ዋና ገጽ"]
 ]
 
 # ==============================================================================
@@ -1348,6 +1346,37 @@ async def stock_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
         )
         return
+    
+    pharmacy_internal_id = get_pharmacy_id_by_chat_id(pharmacy_chat_id)
+    if not pharmacy_internal_id:
+        await update.message.reply_text(
+            "⚠️ የፋርማሲ መለያ አልተገኘም። እባክዎ እንደገና ይመዝገቡ።",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        return
+    
+    # Check if verified
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"SELECT is_verified FROM pharmacies WHERE id = {placeholder}", (pharmacy_internal_id,))
+        row = cursor.fetchone()
+        is_verified = row[0] if row else 0
+        
+        if is_verified != 1:
+            await update.message.reply_text(
+                "⏳ ፋርማሲዎ ገና አልተረጋገጠም!\n\n"
+                "📝 እባክዎ አስተዳዳሪው ፋርማሲዎን እስኪያረጋግጥ ይጠብቁ።",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+            return
+    except Exception as e:
+        logging.error(f"Error checking verification: {e}")
+    finally:
+        if conn:
+            conn.close()
     
     await update.message.reply_text(
         f"📦 **የክምችት አስተዳደር**\n\n"
@@ -1828,7 +1857,7 @@ async def delete_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ ስህተት ተከስቷል።")
 
 # ==============================================================================
-# EXISTING HANDLERS (show_orders, respond_order_callback, etc.)
+# EXISTING HANDLERS
 # ==============================================================================
 
 async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
