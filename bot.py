@@ -103,6 +103,7 @@ def init_db():
                 )
             """)
         
+        # Add latitude and longitude columns if they don't exist
         try:
             cursor.execute("ALTER TABLE pharmacies ADD COLUMN latitude REAL")
             logging.info("✅ latitude column added")
@@ -193,6 +194,7 @@ def init_db():
                 )
             """)
         
+        # Add status column if it doesn't exist
         try:
             cursor.execute("ALTER TABLE pharmacy_responses ADD COLUMN status TEXT DEFAULT 'pending'")
             logging.info("✅ status column added")
@@ -733,7 +735,38 @@ def delete_stock_item(stock_id, pharmacy_id):
             conn.close()
 
 # ==============================================================================
-# 5. REMINDER FUNCTIONS
+# 5. DISTANCE CALCULATION FUNCTION - ✅ FIXED
+# ==============================================================================
+
+def calculate_distance(lat1, lon1, lat2, lon2):
+    """Calculate distance between two points in kilometers using Haversine formula"""
+    R = 6371  # Earth's radius in kilometers
+    try:
+        # Convert to float
+        lat1 = float(lat1)
+        lon1 = float(lon1)
+        lat2 = float(lat2)
+        lon2 = float(lon2)
+        
+        # Convert degrees to radians
+        lat1_rad = math.radians(lat1)
+        lat2_rad = math.radians(lat2)
+        delta_lat = math.radians(lat2 - lat1)
+        delta_lon = math.radians(lon2 - lon1)
+        
+        # Haversine formula
+        a = math.sin(delta_lat/2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon/2)**2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+        
+        # Distance in kilometers
+        distance = R * c
+        return round(distance, 2)
+    except Exception as e:
+        logging.error(f"Error calculating distance: {e}")
+        return None
+
+# ==============================================================================
+# 6. REMINDER FUNCTIONS
 # ==============================================================================
 
 def save_medicine_reminder_db(user_id, medicine_name, dosage, reminder_time, frequency, days_of_week=None):
@@ -800,7 +833,7 @@ def delete_medicine_reminder_db(reminder_id, user_id):
             conn.close()
 
 # ==============================================================================
-# 6. SEARCH HISTORY FUNCTIONS
+# 7. SEARCH HISTORY FUNCTIONS
 # ==============================================================================
 
 def save_search_history(user_id, medicine_name, result_summary=""):
@@ -870,7 +903,7 @@ def get_top_medicines(limit=10):
             conn.close()
 
 # ==============================================================================
-# 7. AI LOGS FUNCTIONS
+# 8. AI LOGS FUNCTIONS
 # ==============================================================================
 
 def log_ai_request(user_id, request_type, request_data, response_data, status_code, response_time, error=None):
@@ -916,21 +949,8 @@ def get_ai_stats():
             conn.close()
 
 # ==============================================================================
-# 8. DISTANCE CALCULATION AND TOP PHARMACIES
+# 9. TOP PHARMACIES
 # ==============================================================================
-
-def calculate_distance(lat1, lon1, lat2, lon2):
-    R = 6371
-    try:
-        lat1_rad = math.radians(float(lat1))
-        lat2_rad = math.radians(float(lat2))
-        delta_lat = math.radians(float(lat2) - float(lat1))
-        delta_lon = math.radians(float(lon2) - float(lon1))
-        a = math.sin(delta_lat/2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon/2)**2
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-        return round(R * c, 2)
-    except:
-        return None
 
 def get_top_pharmacies(limit=10):
     conn = None
@@ -964,7 +984,7 @@ def get_top_pharmacies(limit=10):
             conn.close()
 
 # ==============================================================================
-# 9. NOTIFICATION SYSTEM
+# 10. NOTIFICATION SYSTEM
 # ==============================================================================
 
 def save_notification(user_id, pharmacy_id, notification_type, message):
@@ -1069,7 +1089,7 @@ async def send_order_notification(context, pharmacy_chat_id, customer_id, medici
     await send_telegram_notification(context, pharmacy_chat_id, message)
 
 # ==============================================================================
-# 10. SAVE PHARMACY REQUEST
+# 11. SAVE PHARMACY REQUEST
 # ==============================================================================
 
 def save_pharmacy_request(pharmacy_chat_id, customer_id, medicine_name):
@@ -1129,7 +1149,7 @@ def update_order_status(order_id, status):
             conn.close()
 
 # ==============================================================================
-# 11. STATES & KEYBOARDS - PROFESSIONAL UI
+# 12. STATES & KEYBOARDS - PROFESSIONAL UI
 # ==============================================================================
 WAITING_FOR_SEARCH = 1
 WAITING_FOR_PHARMACY_PRICE = 2
@@ -1176,7 +1196,7 @@ STOCK_KEYBOARD = [
 ]
 
 # ==============================================================================
-# 12. TRANSLATION FUNCTION
+# 13. TRANSLATION FUNCTION
 # ==============================================================================
 
 async def translate_to_amharic(english_text):
@@ -1215,7 +1235,7 @@ def clean_translation(text):
     return '\n'.join(unique_lines)
 
 # ==============================================================================
-# 13. AI HANDLER
+# 14. AI HANDLER
 # ==============================================================================
 
 import time
@@ -1296,7 +1316,7 @@ Include a disclaimer that this is for informational purposes only."""
         return f"❌ Error: {str(e)[:100]}"
 
 # ==============================================================================
-# 14. HANDLERS
+# 15. HANDLERS
 # ==============================================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1331,18 +1351,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==============================================================================
-# STOCK MANAGEMENT HANDLERS
+# STOCK MANAGEMENT HANDLERS - ✅ FIXED
 # ==============================================================================
 
 async def stock_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """📦 የክምችት አስተዳደር ሜኑ"""
     try:
-        logging.info("📦 stock_menu function called!")  # ✅ ይህን ያክሉ
+        logging.info("📦 stock_menu function called!")
         
         pharmacy_chat_id = update.effective_user.id
         logging.info(f"👤 User ID: {pharmacy_chat_id}")
         
-        # Check if registered as pharmacy
         pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
         logging.info(f"🏥 Pharmacy info: {pharm_info}")
         
@@ -1388,24 +1407,16 @@ async def stock_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if conn:
                 conn.close()
         
-        # Show stock menu
-        stock_keyboard = [
-            ["📦 መድኃኒት ጨምር", "📊 ክምችት ማየት"],
-            ["🔁 ክምችት አስተካክል", "⚠️ ዝቅተኛ ክምችት"],
-            ["📋 የመድኃኒት ታሪክ", "🗑️ መድኃኒት ሰርዝ"],
-            ["🏠 ዋና ገጽ"]
-        ]
-        
         await update.message.reply_text(
             f"📦 **የክምችት አስተዳደር**\n\n"
             f"🏥 ፋርማሲ: {pharm_info[0]}\n"
             f"📍 አካባቢ: {pharm_info[1]}\n\n"
             f"👇 የሚፈልጉትን አገልግሎት ይምረጡ:",
             parse_mode="Markdown",
-            reply_markup=ReplyKeyboardMarkup(stock_keyboard, resize_keyboard=True)
+            reply_markup=ReplyKeyboardMarkup(STOCK_KEYBOARD, resize_keyboard=True)
         )
         
-        logging.info("✅ Stock menu sent successfully!")  # ✅ ይህን ያክሉ
+        logging.info("✅ Stock menu sent successfully!")
         
     except Exception as e:
         logging.error(f"❌ Error in stock_menu: {e}")
@@ -1413,8 +1424,6 @@ async def stock_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ ስህተት ተከስቷል። እባክዎ እንደገና ይሞክሩ።\n\n`{str(e)[:200]}`",
             parse_mode="Markdown"
         )
-        reply_markup=ReplyKeyboardMarkup(STOCK_KEYBOARD, resize_keyboard=True)
-    )
 
 async def add_stock_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """📦 አዲስ መድኃኒት ወደ ክምችት መጨመር"""
@@ -2440,7 +2449,16 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
                 await start(update, context)
                 return ConversationHandler.END
 
-    # ... ቀሪው ኮድ (የደንበኛ ጥያቄ አያያዝ) ...
+    user = update.effective_user
+    user_loc = context.user_data.get('user_location')
+    verified_pharmacies = get_verified_pharmacies_by_location(user_loc) if user_loc else []
+    if not verified_pharmacies:
+        verified_pharmacies = get_verified_pharmacies_by_location(None)
+
+    if not verified_pharmacies:
+        await msg.reply_text("⚠️ ምንም የተረጋገጡ ፋርማሲዎች የሉም።")
+        return ConversationHandler.END
+
     keyboard = [[
         InlineKeyboardButton("✅ አለኝ", callback_data=f"available_{user.id}"),
         InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{user.id}")
@@ -2796,7 +2814,7 @@ async def error_handler_func(update: object, context: ContextTypes.DEFAULT_TYPE)
     logging.error(msg="Exception:", exc_info=context.error)
 
 # ==============================================================================
-# 15. MAIN FUNCTION
+# 16. MAIN FUNCTION
 # ==============================================================================
 
 def main():
