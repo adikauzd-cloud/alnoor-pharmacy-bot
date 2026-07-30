@@ -73,14 +73,17 @@ def get_db_connection():
         return conn
 
 def init_db():
-    """Creates required tables if they don't exist."""
+    """Creates required tables if they don't exist (Fixes Postgres AUTOINCREMENT syntax error)."""
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    # PostgreSQL እና SQLite የመታወቂያ (ID) አይነት ልዩነት ማስተካከያ
+    id_type = "SERIAL PRIMARY KEY" if DATABASE_URL else "INTEGER PRIMARY KEY AUTOINCREMENT"
+
     # Pharmacies Table
-    cursor.execute("""
+    cursor.execute(f"""
         CREATE TABLE IF NOT EXISTS pharmacies (
-            id INTEGER PRIMARY KEY AUTOINCREMENT if not DATABASE_URL else SERIAL PRIMARY KEY,
+            id {id_type},
             chat_id BIGINT UNIQUE,
             name TEXT,
             location TEXT,
@@ -92,9 +95,9 @@ def init_db():
     """)
 
     # Pharmacy Responses / Orders Table
-    cursor.execute("""
+    cursor.execute(f"""
         CREATE TABLE IF NOT EXISTS pharmacy_responses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT if not DATABASE_URL else SERIAL PRIMARY KEY,
+            id {id_type},
             pharmacy_id INTEGER,
             customer_id BIGINT,
             medicine_name TEXT,
@@ -104,9 +107,9 @@ def init_db():
     """)
 
     # Search History Table
-    cursor.execute("""
+    cursor.execute(f"""
         CREATE TABLE IF NOT EXISTS search_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT if not DATABASE_URL else SERIAL PRIMARY KEY,
+            id {id_type},
             user_id BIGINT,
             query TEXT,
             result TEXT,
@@ -115,9 +118,9 @@ def init_db():
     """)
 
     # Reminders Table
-    cursor.execute("""
+    cursor.execute(f"""
         CREATE TABLE IF NOT EXISTS reminders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT if not DATABASE_URL else SERIAL PRIMARY KEY,
+            id {id_type},
             user_id BIGINT,
             medicine_name TEXT,
             dosage TEXT,
@@ -126,9 +129,9 @@ def init_db():
     """)
 
     # AI Logs Table
-    cursor.execute("""
+    cursor.execute(f"""
         CREATE TABLE IF NOT EXISTS ai_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT if not DATABASE_URL else SERIAL PRIMARY KEY,
+            id {id_type},
             user_id BIGINT,
             action TEXT,
             payload TEXT,
@@ -142,7 +145,7 @@ def init_db():
 
     conn.commit()
     conn.close()
-    logging.info("✅ Database tables initialized.")
+    logging.info("✅ Database tables initialized successfully.")
 
 # ==============================================================================
 # 4. LOGGING & AI LOGGING HELPERS
@@ -412,7 +415,7 @@ async def check_and_send_reminders(context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Error checking reminders: {e}")
 
 # ==============================================================================
-# 12. FLASK KEEP-ALIVE SERVER
+# 11. FLASK KEEP-ALIVE SERVER
 # ==============================================================================
 flask_app = Flask(__name__)
 
@@ -425,7 +428,7 @@ def run_flask():
     flask_app.run(host="0.0.0.0", port=port)
 
 # ==============================================================================
-# 13. TEXT CLEANING UTILITY
+# 12. TEXT CLEANING UTILITY
 # ==============================================================================
 def clean_translation(text: str) -> str:
     """Removes duplicate lines from input text."""
@@ -437,7 +440,7 @@ def clean_translation(text: str) -> str:
     return "\n".join(unique_lines)
 
 # ==============================================================================
-# 14. OPENROUTER / GEMINI AI INTEGRATION
+# 13. OPENROUTER / GEMINI AI INTEGRATION
 # ==============================================================================
 async def get_ai_medicine_info(medicine_name: str, user_id: int = 0) -> str:
     """Fetch detailed medical/pharmaceutical information using OpenRouter API."""
@@ -489,7 +492,7 @@ async def get_ai_medicine_info(medicine_name: str, user_id: int = 0) -> str:
         return "⚠️ ከአርቲፊሻል ኢንቴሊጀንስ ጋር መገናኘት አልተቻለም።"
 
 # ==============================================================================
-# 15. TELEGRAM COMMAND & HANDLER FUNCTIONS
+# 14. TELEGRAM COMMAND & HANDLER FUNCTIONS
 # ==============================================================================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler for /start command."""
@@ -620,7 +623,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==============================================================================
-# 16. SEARCH & AI INFO CONVERSATION HANDLERS
+# 15. SEARCH & AI INFO CONVERSATION HANDLERS
 # ==============================================================================
 async def process_medicine_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles searching for a medicine across pharmacies."""
@@ -711,7 +714,7 @@ async def process_reminder_input(update: Update, context: ContextTypes.DEFAULT_T
     return ConversationHandler.END
 
 # ==============================================================================
-# 17. PHARMACY REGISTRATION FLOW
+# 16. PHARMACY REGISTRATION FLOW
 # ==============================================================================
 async def reg_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📝 እባክዎ የፋርማሲውን ሙሉ ስም ያስገቡ:")
@@ -789,7 +792,7 @@ async def reg_license(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==============================================================================
-# 18. CALLBACK QUERY HANDLER (Admin Actions & Pharmacy Pricing)
+# 17. CALLBACK QUERY HANDLER (Admin Actions & Pharmacy Pricing)
 # ==============================================================================
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -861,7 +864,7 @@ async def process_order_price_input(update: Update, context: ContextTypes.DEFAUL
     return ConversationHandler.END
 
 # ==============================================================================
-# 19. ADMIN & STATS COMMANDS
+# 18. ADMIN & STATS COMMANDS
 # ==============================================================================
 async def admin_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -894,7 +897,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==============================================================================
-# 20. MAIN APPLICATION INITIALIZATION & RUNNER
+# 19. MAIN APPLICATION INITIALIZATION & RUNNER
 # ==============================================================================
 def main():
     # 1. Initialize DB tables
