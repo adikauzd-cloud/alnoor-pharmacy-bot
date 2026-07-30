@@ -2382,6 +2382,8 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
         return ConversationHandler.END
 
     if msg.text:
+        logging.info(f"📝 User message: {msg.text}")
+        
         menu_buttons = [
             "🔍 መድኃኒት ፈልግ", "📖 የመድኃኒት መረጃ",
             "📍 አካባቢ ምረጥ", "📋 ፋርማሲዎች",
@@ -2391,6 +2393,8 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
         ]
         
         if msg.text in menu_buttons:
+            logging.info(f"✅ Menu button detected: {msg.text}")
+            
             if msg.text == "🔍 መድኃኒት ፈልግ":
                 return await prompt_search(update, context)
             elif msg.text == "📋 ትዕዛዞች":
@@ -2398,21 +2402,16 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
             elif msg.text == "💊 ማሳሰቢያ":
                 return await add_medicine_reminder(update, context)
             elif msg.text == "📦 ክምችት":
+                logging.info("📦 Stock button pressed! Calling stock_menu...")
                 return await stock_menu(update, context)
+            elif msg.text == "📞 ድጋፍ":
+                await show_help(update, context)
+                return ConversationHandler.END
             else:
                 await start(update, context)
                 return ConversationHandler.END
 
-    user = update.effective_user
-    user_loc = context.user_data.get('user_location')
-    verified_pharmacies = get_verified_pharmacies_by_location(user_loc) if user_loc else []
-    if not verified_pharmacies:
-        verified_pharmacies = get_verified_pharmacies_by_location(None)
-
-    if not verified_pharmacies:
-        await msg.reply_text("⚠️ ምንም የተረጋገጡ ፋርማሲዎች የሉም።")
-        return ConversationHandler.END
-
+    # ... ቀሪው ኮድ (የደንበኛ ጥያቄ አያያዝ) ...
     keyboard = [[
         InlineKeyboardButton("✅ አለኝ", callback_data=f"available_{user.id}"),
         InlineKeyboardButton("❌ የለኝም", callback_data=f"not_available_{user.id}")
