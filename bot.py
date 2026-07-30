@@ -2043,7 +2043,7 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
                 f"💊 **መድኃኒት**\n" f"└─ {medicine_name}\n\n"
                 f"🏥 **ፋርማሲ**\n"  f"└─ {pharm_name}\n\n"
                 f"📍 **አካባቢ**\n"   f"└─ {pharm_loc}\n\n"
-                f"📞 **ስልክ**\n"።   f"└─ {pharm_phone}\n\n"
+                f"📞 **ስልክ**\n"    f"└─ {pharm_phone}\n\n"
                 f"🕒 **የስራ ሰዓት**\n"
                 f"└─ {pharm_hours}\n\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━\n"
