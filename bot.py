@@ -1336,54 +1336,83 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def stock_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """📦 የክምችት አስተዳደር ሜኑ"""
-    pharmacy_chat_id = update.effective_user.id
-    
-    pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
-    if not pharm_info:
-        await update.message.reply_text(
-            "⚠️ ይህ አገልግሎት ለተመዘገቡ ፋርማሲዎች ብቻ ነው!\n\n"
-            "📝 እባክዎ መጀመሪያ ፋርማሲዎን ይመዝገቡ (🏥 ፋርማሲ መዝግብ)",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
-        return
-    
-    pharmacy_internal_id = get_pharmacy_id_by_chat_id(pharmacy_chat_id)
-    if not pharmacy_internal_id:
-        await update.message.reply_text(
-            "⚠️ የፋርማሲ መለያ አልተገኘም። እባክዎ እንደገና ይመዝገቡ።",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
-        return
-    
-    # Check if verified
-    conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"SELECT is_verified FROM pharmacies WHERE id = {placeholder}", (pharmacy_internal_id,))
-        row = cursor.fetchone()
-        is_verified = row[0] if row else 0
+        logging.info("📦 stock_menu function called!")  # ✅ ይህን ያክሉ
         
-        if is_verified != 1:
+        pharmacy_chat_id = update.effective_user.id
+        logging.info(f"👤 User ID: {pharmacy_chat_id}")
+        
+        # Check if registered as pharmacy
+        pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
+        logging.info(f"🏥 Pharmacy info: {pharm_info}")
+        
+        if not pharm_info:
             await update.message.reply_text(
-                "⏳ ፋርማሲዎ ገና አልተረጋገጠም!\n\n"
-                "📝 እባክዎ አስተዳዳሪው ፋርማሲዎን እስኪያረጋግጥ ይጠብቁ።",
+                "⚠️ ይህ አገልግሎት ለተመዘገቡ ፋርማሲዎች ብቻ ነው!\n\n"
+                "📝 እባክዎ መጀመሪያ ፋርማሲዎን ይመዝገቡ (🏥 ፋርማሲ መዝግብ)",
                 reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
             )
             return
+        
+        pharmacy_internal_id = get_pharmacy_id_by_chat_id(pharmacy_chat_id)
+        logging.info(f"🆔 Pharmacy internal ID: {pharmacy_internal_id}")
+        
+        if not pharmacy_internal_id:
+            await update.message.reply_text(
+                "⚠️ የፋርማሲ መለያ አልተገኘም። እባክዎ እንደገና ይመዝገቡ።",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+            )
+            return
+        
+        # Check if verified
+        conn = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            placeholder = "%s" if DATABASE_URL else "?"
+            cursor.execute(f"SELECT is_verified FROM pharmacies WHERE id = {placeholder}", (pharmacy_internal_id,))
+            row = cursor.fetchone()
+            is_verified = row[0] if row else 0
+            logging.info(f"✅ Is verified: {is_verified}")
+            
+            if is_verified != 1:
+                await update.message.reply_text(
+                    "⏳ ፋርማሲዎ ገና አልተረጋገጠም!\n\n"
+                    "📝 እባክዎ አስተዳዳሪው ፋርማሲዎን እስኪያረጋግጥ ይጠብቁ።",
+                    reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+                )
+                return
+        except Exception as e:
+            logging.error(f"Error checking verification: {e}")
+        finally:
+            if conn:
+                conn.close()
+        
+        # Show stock menu
+        stock_keyboard = [
+            ["📦 መድኃኒት ጨምር", "📊 ክምችት ማየት"],
+            ["🔁 ክምችት አስተካክል", "⚠️ ዝቅተኛ ክምችት"],
+            ["📋 የመድኃኒት ታሪክ", "🗑️ መድኃኒት ሰርዝ"],
+            ["🏠 ዋና ገጽ"]
+        ]
+        
+        await update.message.reply_text(
+            f"📦 **የክምችት አስተዳደር**\n\n"
+            f"🏥 ፋርማሲ: {pharm_info[0]}\n"
+            f"📍 አካባቢ: {pharm_info[1]}\n\n"
+            f"👇 የሚፈልጉትን አገልግሎት ይምረጡ:",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(stock_keyboard, resize_keyboard=True)
+        )
+        
+        logging.info("✅ Stock menu sent successfully!")  # ✅ ይህን ያክሉ
+        
     except Exception as e:
-        logging.error(f"Error checking verification: {e}")
-    finally:
-        if conn:
-            conn.close()
-    
-    await update.message.reply_text(
-        f"📦 **የክምችት አስተዳደር**\n\n"
-        f"🏥 ፋርማሲ: {pharm_info[0]}\n"
-        f"📍 አካባቢ: {pharm_info[1]}\n\n"
-        f"👇 የሚፈልጉትን አገልግሎት ይምረጡ:",
-        parse_mode="Markdown",
+        logging.error(f"❌ Error in stock_menu: {e}")
+        await update.message.reply_text(
+            f"❌ ስህተት ተከስቷል። እባክዎ እንደገና ይሞክሩ።\n\n`{str(e)[:200]}`",
+            parse_mode="Markdown"
+        )
         reply_markup=ReplyKeyboardMarkup(STOCK_KEYBOARD, resize_keyboard=True)
     )
 
