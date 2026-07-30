@@ -227,38 +227,6 @@ def init_db():
                 )
             """)
         
-        # ✅ NEW: Medicine Reminders table
-        if DATABASE_URL:
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS medicine_reminders (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL,
-                    medicine_name TEXT NOT NULL,
-                    dosage TEXT,
-                    reminder_time TEXT NOT NULL,
-                    frequency TEXT DEFAULT 'daily',
-                    days_of_week TEXT,
-                    is_active BOOLEAN DEFAULT TRUE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_reminded TIMESTAMP
-                )
-            """)
-        else:
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS medicine_reminders (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    medicine_name TEXT NOT NULL,
-                    dosage TEXT,
-                    reminder_time TEXT NOT NULL,
-                    frequency TEXT DEFAULT 'daily',
-                    days_of_week TEXT,
-                    is_active BOOLEAN DEFAULT TRUE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_reminded TIMESTAMP
-                )
-            """)
-        
         if DATABASE_URL:
             conn.commit()
         logging.info("✅ Database initialized successfully")
@@ -487,72 +455,6 @@ def get_bot_statistics():
     except Exception as e:
         logging.error(f"Get bot statistics error: {e}")
         return 0, 0, 0
-    finally:
-        if conn:
-            conn.close()
-
-def save_medicine_reminder_db(user_id, medicine_name, dosage, reminder_time, frequency, days_of_week=None):
-    """Save medicine reminder to database"""
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"""
-            INSERT INTO medicine_reminders 
-            (user_id, medicine_name, dosage, reminder_time, frequency, days_of_week, is_active)
-            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, TRUE)
-        """, (user_id, medicine_name, dosage, reminder_time, frequency, days_of_week))
-        if DATABASE_URL:
-            conn.commit()
-        return True
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logging.error(f"Save medicine reminder error: {e}")
-        return False
-    finally:
-        if conn:
-            conn.close()
-
-def get_user_medicine_reminders(user_id):
-    """Get all active medicine reminders for a user"""
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"""
-            SELECT id, medicine_name, dosage, reminder_time, frequency, is_active
-            FROM medicine_reminders 
-            WHERE user_id = {placeholder} AND is_active = TRUE
-            ORDER BY reminder_time
-        """, (user_id,))
-        rows = cursor.fetchall()
-        return rows
-    except Exception as e:
-        logging.error(f"Get medicine reminders error: {e}")
-        return []
-    finally:
-        if conn:
-            conn.close()
-
-def delete_medicine_reminder_db(reminder_id, user_id):
-    """Delete a medicine reminder"""
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        placeholder = "%s" if DATABASE_URL else "?"
-        cursor.execute(f"DELETE FROM medicine_reminders WHERE id = {placeholder} AND user_id = {placeholder}", (reminder_id, user_id))
-        if DATABASE_URL:
-            conn.commit()
-        return True
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logging.error(f"Delete medicine reminder error: {e}")
-        return False
     finally:
         if conn:
             conn.close()
@@ -815,16 +717,16 @@ async def send_telegram_notification(context, user_id, message):
         return False
 
 async def send_order_notification(context, pharmacy_chat_id, customer_id, medicine_name, order_time):
-    """Send order notification WITHOUT showing customer ID"""
     message = (
         f"🆕 **አዲስ የመድኃኒት ትዕዛዝ!**\n\n"
         f"💊 መድኃኒት: {medicine_name}\n"
         f"📅 የታዘዘበት ቀን: {order_time.strftime('%Y-%m-%d')}\n"
         f"🕐 የታዘዘበት ሰዓት: {order_time.strftime('%H:%M')}\n\n"
+        f"📋 የደንበኛ መለያ: {customer_id}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"⚡ *እባክዎ በፍጥነት ምላሽ ይስጡ!*"
     )
-    save_notification(pharmacy_chat_id, None, "order", f"አዲስ ትዕዛዝ: {medicine_name} - ከደንበኛ: {customer_id}")
+    save_notification(pharmacy_chat_id, None, "order", message)
     await send_telegram_notification(context, pharmacy_chat_id, message)
 
 # ==============================================================================
@@ -893,14 +795,13 @@ def update_order_status(order_id, status):
             conn.close()
 
 # ==============================================================================
-# 9. STATES & KEYBOARDS - PROFESSIONAL UI
+# 9. STATES & KEYBOARDS
 # ==============================================================================
 WAITING_FOR_SEARCH = 1
 WAITING_FOR_PHARMACY_PRICE = 2
 WAITING_FOR_ORDER_PRICE = 3
 WAITING_FOR_LOCATION_SET = 4
 WAITING_FOR_MED_INFO = 5
-WAITING_FOR_MEDICINE_REMINDER = 6
 
 REG_NAME = 10
 REG_LOCATION = 11
@@ -908,13 +809,11 @@ REG_PHONE = 12
 REG_HOURS = 14
 REG_LICENSE = 13
 
-# ✅ Professional UI - Clean and Modern
 MAIN_KEYBOARD = [
-    ["🔍 መድኃኒት ፈልግ", "📖 የመድኃኒት መረጃ"],
-    ["📍 አካባቢ ምረጥ", "📋 ፋርማሲዎች"],
-    ["🏥 ፋርማሲ መዝግብ", "📋 ትዕዛዞች"],
-    ["💊 ማሳሰቢያ", "📞 ድጋፍ"],
-    ["🏠 ዋና ገጽ"]
+    ["🔍 መድኃኒት ፈልግ", "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ"],
+    ["📍 አካባቢ ምረጥ", "📋 የፋርማሲዎች ዝርዝር"],
+    ["🏥 ፋርማሲ መዝግብ", "📋 የታዘዙ መድኃኒቶች"],
+    ["📞 እገዛ / ድጋፍ", "🏠 ወደ ዋና ገጽ"]
 ]
 
 LOCATION_KEYBOARD = [
@@ -1167,7 +1066,7 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     completed_count = len([o for o in all_orders if o[5] == 'completed'])
     
     await update.message.reply_text(
-        f"📋 **የታዘዙ መድኃኒቶች** (ከአዲስ ወደ አሮጌ)\n"
+        f"📋 **የታዘዙ መድኃኒቶች** (ከአሮጌ ወደ አዲስ)\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🔔 ጠቅላላ: {len(all_orders)} ጥያቄዎች\n"
         f"⏳ ምላሽ የሚጠብቁ: {pending_count}\n"
@@ -1210,7 +1109,6 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text,
                 parse_mode="Markdown"
             )
-
 async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """💊 ለታዘዘ መድኃኒት መልስ ለመስጠት"""
     
@@ -1236,7 +1134,7 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
             logging.error(f"Error getting order: {e}")
             await query.edit_message_text(
                 "❌ የትዕዛዝ መረጃ ማግኘት አልተቻለም።",
-                reply_markup=None
+                reply_markup=None  # ✅ Fix: Add reply_markup=None
             )
             return
         finally:
@@ -1246,7 +1144,7 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
         if not order:
             await query.edit_message_text(
                 "❌ ይህ ትዕዛዝ አልተገኘም።",
-                reply_markup=None
+                reply_markup=None  # ✅ Fix: Add reply_markup=None
             )
             return
         
@@ -1257,7 +1155,7 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
             await query.edit_message_text(
                 f"⏳ ይህ ትዕዛዝ ቀድሞውኑ መልስ አግኝቷል (ሁኔታ: {status})።\n\n"
                 f"💡 መልስ መስጠት የሚችሉት ምላሽ ላልተሰጠ ትዕዛዝ ብቻ ነው።",
-                reply_markup=None
+                reply_markup=None  # ✅ Fix: Add reply_markup=None
             )
             return
         
@@ -1271,6 +1169,7 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
             ["🏠 ወደ ዋና ገጽ"]
         ]
         
+        # ✅ Use edit_message_text with reply_markup=None for the initial edit
         await query.edit_message_text(
             f"💊 **ለትዕዛዝ መልስ መስጠት**\n\n"
             f"📋 መድኃኒት: **{medicine_name}**\n"
@@ -1279,10 +1178,10 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
             f"ምሳሌ: 150 ብር, አለኝ, ከሰአት በኋላ ይምጡ\n\n"
             f"✅ 'አለኝ' ወይም ❌ 'የለኝም' ብለው መመለስ ይችላሉ።",
             parse_mode="Markdown",
-            reply_markup=None
+            reply_markup=None  # ✅ Fix: Remove inline keyboard from the message
         )
         
-        # Send a new message with the keyboard
+        # ✅ Send a new message with the keyboard
         await query.message.reply_text(
             "👇 ከታች ያሉትን Button ይጠቀሙ፦",
             reply_markup=ReplyKeyboardMarkup(price_keyboard, resize_keyboard=True)
@@ -1295,132 +1194,9 @@ async def respond_order_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.edit_message_text(
             f"❌ ስህተት ተከስቷል። እባክዎ እንደገና ይሞክሩ።\n\n`{str(e)[:100]}`",
             parse_mode="Markdown",
-            reply_markup=None
+            reply_markup=None  # ✅ Fix: Add reply_markup=None
         )
         return ConversationHandler.END
-
-# ==============================================================================
-# REMINDER HANDLERS
-# ==============================================================================
-
-async def add_medicine_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """💊 Add new medicine reminder"""
-    await update.message.reply_text(
-        "💊 **አዲስ የመድኃኒት ማስታወሻ**\n\n"
-        "እባክዎ የሚከተሉትን መረጃዎች በዚህ ቅርጸት ያስገቡ፦\n\n"
-        "`መድኃኒት: ፓራሲታሞል`\n"
-        "`መጠን: 500mg`\n"
-        "`ሰዓት: 08:00`\n"
-        "`ድግግሞሽ: በየቀኑ`\n\n"
-        "ለምሳሌ፦\n"
-        "`መድኃኒት: ፓራሲታሞል, መጠን: 500mg, ሰዓት: 08:00, ድግግሞሽ: በየቀኑ`",
-        parse_mode="Markdown"
-    )
-    return WAITING_FOR_MEDICINE_REMINDER
-
-async def save_medicine_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """💾 Save medicine reminder"""
-    user_id = update.effective_user.id
-    text = update.message.text
-    
-    try:
-        parts = text.split(',')
-        medicine = ""
-        dosage = ""
-        reminder_time = ""
-        frequency = "በየቀኑ"
-        
-        for part in parts:
-            part = part.strip()
-            if part.startswith("መድኃኒት:") or part.startswith("መድሃኒት:"):
-                medicine = part.split(":", 1)[1].strip()
-            elif part.startswith("መጠን:"):
-                dosage = part.split(":", 1)[1].strip()
-            elif part.startswith("ሰዓት:"):
-                reminder_time = part.split(":", 1)[1].strip()
-            elif part.startswith("ድግግሞሽ:"):
-                frequency = part.split(":", 1)[1].strip()
-        
-        if not medicine or not reminder_time:
-            await update.message.reply_text(
-                "❌ እባክዎ ቢያንስ 'መድኃኒት' እና 'ሰዓት' ያስገቡ።\n\n"
-                "ምሳሌ: `መድኃኒት: ፓራሲታሞል, ሰዓት: 08:00`",
-                parse_mode="Markdown"
-            )
-            return WAITING_FOR_MEDICINE_REMINDER
-        
-        if save_medicine_reminder_db(user_id, medicine, dosage, reminder_time, frequency):
-            await update.message.reply_text(
-                f"✅ **ማስታወሻ ተመዝግቧል!**\n\n"
-                f"💊 መድኃኒት: {medicine}\n"
-                f"📊 መጠን: {dosage if dosage else 'አልተጠቀሰም'}\n"
-                f"⏰ ሰዓት: {reminder_time}\n"
-                f"🔄 ድግግሞሽ: {frequency}\n\n"
-                f"📌 በየቀኑ በ {reminder_time} ላይ ማሳሰቢያ ይደርስዎታል!",
-                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-            )
-        else:
-            await update.message.reply_text("❌ ማስታወሻውን ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ።")
-        
-    except Exception as e:
-        logging.error(f"Error saving reminder: {e}")
-        await update.message.reply_text(f"❌ ስህተት ተከስቷል። እባክዎ እንደገና ይሞክሩ።")
-    
-    return ConversationHandler.END
-
-async def list_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """📋 List all reminders"""
-    user_id = update.effective_user.id
-    
-    medicine_reminders = get_user_medicine_reminders(user_id)
-    
-    if not medicine_reminders:
-        await update.message.reply_text(
-            "📋 ምንም ንቁ ማስታወሻዎች የሉም።\n\n"
-            "💊 አዲስ የመድኃኒት ማስታወሻ ለመፍጠር '💊 ማሳሰቢያ' ይጫኑ።",
-            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-        )
-        return
-    
-    text = "📋 **የእርስዎ ማስታወሻዎች**\n\n"
-    text += "💊 **የመድኃኒት ማስታወሻዎች**\n"
-    for rem in medicine_reminders:
-        rem_id, name, dosage, time, freq, active = rem
-        text += f"   • {name} - ⏰ {time} - {freq}\n"
-        if dosage:
-            text += f"     📊 {dosage}\n"
-        text += f"     🆔 ለመሰረዝ: `ሰርዝ {rem_id}`\n"
-    
-    await update.message.reply_text(
-        text,
-        parse_mode="Markdown",
-        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
-    )
-
-async def delete_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """🗑️ Delete a reminder"""
-    user_id = update.effective_user.id
-    text = update.message.text
-    
-    try:
-        if text.startswith("ሰርዝ"):
-            rem_id = int(text.split()[1])
-            if delete_medicine_reminder_db(rem_id, user_id):
-                await update.message.reply_text(f"✅ ማስታወሻ #{rem_id} ተሰርዟል!")
-            else:
-                await update.message.reply_text("❌ ማስታወሻውን መሰረዝ አልተቻለም።")
-        else:
-            await update.message.reply_text(
-                "❌ ትክክለኛ ትዕዛዝ ያስገቡ።\n\n"
-                "ምሳሌ: `ሰርዝ 5`"
-            )
-    except Exception as e:
-        logging.error(f"Error deleting reminder: {e}")
-        await update.message.reply_text("❌ ስህተት ተከስቷል። እባክዎ እንደገና ይሞክሩ።")
-
-# ==============================================================================
-# EXISTING HANDLERS (continued)
-# ==============================================================================
 
 async def prompt_med_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -1682,9 +1458,12 @@ async def admin_delete_pharmacy_callback(update: Update, context: ContextTypes.D
         return
     
     pharmacy_id = int(query.data.split("_")[2])
+    
+    # Get pharmacy info before deletion
     pharm_info = get_pharmacy_info_by_id(pharmacy_id)
     pharm_name = pharm_info[0] if pharm_info else f"ID {pharmacy_id}"
     
+    # Confirm deletion
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ አዎ ሰርዝ", callback_data=f"confirm_delete_{pharmacy_id}"),
@@ -1711,10 +1490,13 @@ async def admin_confirm_delete_callback(update: Update, context: ContextTypes.DE
         return
     
     pharmacy_id = int(query.data.split("_")[2])
+    
+    # Get pharmacy info before deletion
     pharm_info = get_pharmacy_info_by_id(pharmacy_id)
     pharm_name = pharm_info[0] if pharm_info else f"ID {pharmacy_id}"
     pharm_chat_id = pharm_info[3] if pharm_info and len(pharm_info) > 3 else None
     
+    # Delete the pharmacy
     success = delete_pharmacy_db(pharmacy_id)
     
     if success:
@@ -1723,6 +1505,7 @@ async def admin_confirm_delete_callback(update: Update, context: ContextTypes.DE
             parse_mode="Markdown"
         )
         
+        # Notify the pharmacy owner
         if pharm_chat_id:
             try:
                 await context.bot.send_message(
@@ -1855,25 +1638,20 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
     if msg.text:
         menu_buttons = [
             "🔍 መድኃኒት ፈልግ",
-            "📖 የመድኃኒት መረጃ",
+            "📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ",
             "📍 አካባቢ ምረጥ",
-            "📋 ፋርማሲዎች",
-            "🏥 ፋርማሲ መዝግብ",
-            "📋 ትዕዛዞች",
-            "💊 ማሳሰቢያ",
-            "📞 ድጋፍ",
-            "🏠 ዋና ገጽ"
+            "📋 የፋርማሲዎች ዝርዝር",
+            "🏥 ፋርማሲ መመዝገቢያ",
+            "📋 የታዘዙ መድኃኒቶች",
+            "📞 እገዛ / ድጋፍ",
+            "🏠 ወደ ዋና ገጽ"
         ]
         
         if msg.text in menu_buttons:
             if msg.text == "🔍 መድኃኒት ፈልግ":
                 return await prompt_search(update, context)
-            elif msg.text == "📋 ትዕዛዞች":
+            elif msg.text == "📋 የታዘዙ መድኃኒቶች":
                 return await show_orders(update, context)
-            elif msg.text == "💊 ማሳሰቢያ":
-                return await add_medicine_reminder(update, context)
-            elif msg.text == "📋 ማስታወሻዎች" or msg.text == "📋 ማሳሰቢያዎች":
-                return await list_reminders(update, context)
             else:
                 await start(update, context)
                 return ConversationHandler.END
@@ -1884,6 +1662,7 @@ async def handle_customer_request(update: Update, context: ContextTypes.DEFAULT_
     if not verified_pharmacies:
         verified_pharmacies = get_verified_pharmacies_by_location(None)
 
+    # If no pharmacies, send to admin
     if not verified_pharmacies:
         await msg.reply_text(
             "⚠️ በአሁኑ ሰዓት ምንም የተረጋገጡ ፋርማሲዎች የሉም።\n\n"
@@ -1994,8 +1773,8 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
         return ConversationHandler.END
 
     price_details = msg.text
+    user_id = update.effective_user.id
     
-    # ✅ Check if this is a response to an order (from "💊 መልስ ስጥ" button)
     order_id = context.user_data.get("responding_order_id")
     customer_id = context.user_data.get("responding_customer_id")
     
@@ -2036,26 +1815,26 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
             if DATABASE_URL:
                 conn.commit()
             
-            # ✅ Send complete info to customer
+            # ✅ PREMIUM INVOICE STYLE - ዘመናዊ እና ግልጽ
             customer_message = (
-                f"🎉 **መድኃኒት ተገኘ!**\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"💊 **መድኃኒት**\n"
-                f"└─ {medicine_name}\n\n"
-                f"🏥 **ፋርማሲ**\n"
-                f"└─ {pharm_name}\n\n"
-                f"📍 **አካባቢ**\n"
-                f"└─ {pharm_loc}\n\n"
-                f"📞 **ስልክ**\n"
-                f"└─ {pharm_phone}\n\n"
-                f"🕒 **የስራ ሰዓት**\n"
-                f"└─ {pharm_hours}\n\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"💰 **ዋጋ**\n"
-                f"└─ {price_details} ብር\n\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"✨ *ያዘዙት መድኃኒት ተገኘ!* ✨\n"
+                f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
+                f"💊 *የመድኃኒቱ ስም*\n"
+                f"   ➜ {medicine_name}\n\n"
+                f"🏥 *የፋርማሲ ስም*\n"
+                f"   ➜ {pharm_name}\n\n"
+                f"📍 *አካባቢ*\n"
+                f"   ➜ {pharm_loc}\n\n"
+                f"📞 *ስልክ*\n"
+                f"   ➜ {pharm_phone}\n\n"
+                f"🕒 *የስራ ሰዓት*\n"
+                f"   ➜ {pharm_hours}\n\n"
+                f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
+                f"💰 *ዋጋ*\n"
+                f"   ➜ {price_details} ብር\n\n"
+                f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
                 f"📞 ለመግዛት ከላይ ባለው ስልክ ያግኙን\n"
-                f"💊 ፋርማሲ በአካል ሲሄዱ የሀኪም ማዘዣ እንዳይረሱ!"
+                f" ፋርማሲ በአካል ሲሄዱ የሀኪም ማዘዣ እንዳይረሱ!"
             )
             
             try:
@@ -2068,7 +1847,9 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
                 logging.info(f"✅ መልእክት ለደንበኛ {customer_id} ተልኳል")
             except Exception as e:
                 logging.error(f"ለደንበኛ መላክ አልተቻለም: {e}")
-                await msg.reply_text(f"⚠️ መልስዎ ተቀምጧል ነገር ግን ለደንበኛው መላክ አልተቻለም።")
+                await msg.reply_text(
+                    f"⚠️ መልስዎ ተቀምጧል ነገር ግን ለደንበኛው መላክ አልተቻለም።"
+                )
             
             await msg.reply_text(
                 "✅ መልስዎ ለደንበኛው በስኬት ተልኳል!",
@@ -2090,7 +1871,7 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
         return ConversationHandler.END
     
     # ============================================================
-    # ✅ Regular flow for pharmacy response (from "✅ አለኝ" button)
+    # ከ "✅ አለኝ" ቁልፍ የሚመጣ መደበኛ ምላሽ
     # ============================================================
     customer_id = context.chat_data.get("target_customer_id")
     pharmacy_chat_id = msg.chat_id
@@ -2134,24 +1915,26 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
         if conn:
             conn.close()
 
-    # ✅ Send complete info to customer
+    # ✅ PREMIUM INVOICE STYLE - ዘመናዊ እና ግልጽ (ከ "አለኝ" ቁልፍ)
     customer_message = (
-        f"🎉 **መድኃኒት ተገኘ!**\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🏥 **ፋርማሲ**\n"
-        f"└─ {pharm_name}\n\n"
-        f"📍 **አካባቢ**\n"
-        f"└─ {pharm_loc}\n\n"
-        f"📞 **ስልክ**\n"
-        f"└─ {pharm_phone}\n\n"
-        f"🕒 **የስራ ሰዓት**\n"
-        f"└─ {pharm_hours}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💰 **ዋጋ**\n"
-        f"└─ {price_details} ብር\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"✨ *ያዘዙት መድኃኒት ተገኘ!* ✨\n"
+        f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
+        f"💊 የመድኃኒትቱ ስም*\n"
+        f"   ➜ {medicine_name if 'medicine_name' in locals() else 'ያልተገለጸ'}\n\n"
+        f"🏥 *የፋርማሲ ስም*\n"
+        f"   ➜ {pharm_name}\n\n"
+        f"📍 *አካባቢ*\n"
+        f"   ➜ {pharm_loc}\n\n"
+        f"📞 *ስልክ*\n"
+        f"   ➜ {pharm_phone}\n\n"
+        f"🕒 *የስራ ሰዓት*\n"
+        f"   ➜ {pharm_hours}\n\n"
+        f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
+        f"💰 *ዋጋ*\n"
+        f"   ➜ {price_details} ብር\n\n"
+        f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
         f"📞 ለመግዛት ከላይ ባለው ስልክ ያግኙን\n"
-        f"💊 ፋርማሲ በአካል ሲሄዱ የሀኪም ማዘዣ እንዳይረሱ!"
+        f"ፋርማሲ በአካል ሲሄዱ የሀኪም ማዘዣ እንዳይረሱ!"
     )
 
     await msg.reply_text(
@@ -2165,6 +1948,232 @@ async def receive_price_details(update: Update, context: ContextTypes.DEFAULT_TY
                 chat_id=int(customer_id),
                 text=customer_message,
                 parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
+            )
+        except Exception as e:
+            logging.error(f"ለደንበኛው {customer_id} መላክ አልተቻለም፦ {e}")
+
+    return ConversationHandler.END
+    # ============================================================
+    # ከ "✅ አለኝ" ቁልፍ የሚመጣ መደበኛ ምላሽ
+    # ============================================================
+    customer_id = context.chat_data.get("target_customer_id")
+    pharmacy_chat_id = msg.chat_id
+
+    if not customer_id:
+        await msg.reply_text(
+            "❌ የደንበኛ መለያ አልተገኘም።",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        return ConversationHandler.END
+
+    pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
+    pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
+    pharm_loc = pharm_info[1] if pharm_info else "ያልተጠቀሰ"
+    pharm_phone = pharm_info[2] if pharm_info else "ያልተጠቀሰ"
+    pharm_hours = pharm_info[3] if pharm_info and pharm_info[3] else "ያልተጠቀሰ"
+
+    pharmacy_internal_id = get_pharmacy_id_by_chat_id(pharmacy_chat_id)
+    if not pharmacy_internal_id:
+        await msg.reply_text("❌ የፋርማሲ መለያ አልተገኘም።")
+        return ConversationHandler.END
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"""
+            INSERT INTO pharmacy_responses (pharmacy_id, customer_id, medicine_name, price, status)
+            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 'responded')
+        """, (pharmacy_internal_id, customer_id, price_details[:50], price_details))
+        if DATABASE_URL:
+            conn.commit()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logging.error(f"ስህተት: {e}")
+        await msg.reply_text(f"❌ ስህተት: {str(e)[:100]}")
+        return ConversationHandler.END
+    finally:
+        if conn:
+            conn.close()
+
+    # ✅ ሙሉ በአማርኛ የተዘጋጀ ፕሮፌሽናል መልእክት (ከ "አለኝ" ቁልፍ)
+    customer_message = (
+        f"╔════════════════════════════════════╗\n"
+        f"║          💊 መድኃኒቱ ተገኘ          ║\n"
+        f"╚════════════════════════════════════╝\n\n"
+        f"? የፋርማሲ  ስም   │ {pharm_name}\n"
+        f"📍 አካባቢ        │ {pharm_loc}\n"
+        f"📞 ስልክ         │ {pharm_phone}\n"
+        f"🕒 የስራ ሰዓት     │ {pharm_hours}\n"
+        f"💰 ዋጋ          │ {price_details} ብር\n"
+        f"═══════════════════════════════════════\n"
+        f"✅ የተረጋገጠ ፋርማሲ\n"
+        f"⚡ ፈጣን ምላሽ\n"
+        f"🔒 አስተማማኝ መረጃ\n"
+        f"═══════════════════════════════════════\n"
+        f"🤖 ፋርማሲ ሲሄዱ የሀኪም ማዘዣ መያዝ እንዳይረሱ"
+    )
+
+    await msg.reply_text(
+        "✅ ዋጋው እና መረጃው ለደንበኛው በስኬት ተልኳል!",
+        reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+    )
+
+    if customer_id:
+        try:
+            await context.bot.send_message(
+                chat_id=int(customer_id),
+                text=customer_message,
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
+            )
+        except Exception as e:
+            logging.error(f"ለደንበኛው {customer_id} መላክ አልተቻለም፦ {e}")
+
+    return ConversationHandler.END
+    
+    # ============================================================
+    # Regular flow for pharmacy response (from "✅ አለኝ" button)
+    # ============================================================
+    customer_id = context.chat_data.get("target_customer_id")
+    pharmacy_chat_id = msg.chat_id
+
+    if not customer_id:
+        await msg.reply_text(
+            "❌ የደንበኛ መለያ አልተገኘም። እባክዎ እንደገና ይሞክሩ።",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        return ConversationHandler.END
+
+    pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
+    pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
+    pharm_loc = pharm_info[1] if pharm_info else "ያልተጠቀሰ"
+    pharm_phone = pharm_info[2] if pharm_info else "ያልተጠቀሰ"
+    pharm_hours = pharm_info[3] if pharm_info and pharm_info[3] else "ያልተጠቀሰ"
+
+    # Get pharmacy internal ID
+    pharmacy_internal_id = get_pharmacy_id_by_chat_id(pharmacy_chat_id)
+    if not pharmacy_internal_id:
+        await msg.reply_text("❌ የፋርማሲ መለያ አልተገኘም።")
+        return ConversationHandler.END
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"""
+            INSERT INTO pharmacy_responses (pharmacy_id, customer_id, medicine_name, price, status)
+            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 'responded')
+        """, (pharmacy_internal_id, customer_id, price_details[:50], price_details))
+        if DATABASE_URL:
+            conn.commit()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logging.error(f"Save pharmacy response error: {e}")
+        await msg.reply_text(f"❌ ስህተት: {str(e)[:100]}")
+        return ConversationHandler.END
+    finally:
+        if conn:
+            conn.close()
+
+    # ✅ IMPROVED UI - Beautiful formatted message for customer (from "አለኝ" button)
+    customer_message = (
+        f"🎉 **ያዘዙት መድኃኒት ተገኘ!**\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🏥 **የፋርማሲው ስም**\n"
+        f"└─ {pharm_name}\n\n"
+        f"📍 **አካባቢ**\n"
+        f"└─ {pharm_loc}\n\n"
+        f"📞 **ስልክ**\n"
+        f"└─ {pharm_phone}\n\n"
+        f"🕒 **የስራ ሰዓት**\n"
+        f"└─ {pharm_hours}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 **ዋጋ እና ዝርዝር መረጃ**\n"
+        f"└─ {price_details}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📌 ለመግዛት ከላይ ባለው ስልክ ቁጥር ያግኙት።\n"
+        f" መድሀኒት ሊገዙ ሲሄዱ የሀኪም ማዘዣ መያዞን አይዘንጉ!"
+    )
+
+    await msg.reply_text("✅ ዋጋው እና መረጃው ለደንበኛው በስኬት ተልኳል!", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
+
+    if customer_id:
+        try:
+            await context.bot.send_message(
+                chat_id=int(customer_id),
+                text=customer_message,
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
+            )
+        except Exception as e:
+            logging.error(f"ለደንበኛው {customer_id} መላክ አልተቻለም፦ {e}")
+
+    return ConversationHandler.END
+    
+    # ============================================================
+    # Regular flow for pharmacy response (from "✅ አለኝ" button)
+    # ============================================================
+    customer_id = context.chat_data.get("target_customer_id")
+    pharmacy_chat_id = msg.chat_id
+
+    if not customer_id:
+        await msg.reply_text(
+            "❌ የደንበኛ መለያ አልተገኘም። እባክዎ እንደገና ይሞክሩ።",
+            reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True)
+        )
+        return ConversationHandler.END
+
+    pharm_info = get_pharmacy_info_by_chat_id(pharmacy_chat_id)
+    pharm_name = pharm_info[0] if pharm_info else "ፋርማሲ"
+    pharm_loc = pharm_info[1] if pharm_info else "ያልተጠቀሰ"
+    pharm_phone = pharm_info[2] if pharm_info else "ያልተጠቀሰ"
+    pharm_hours = pharm_info[3] if pharm_info and pharm_info[3] else "ያልተጠቀሰ"
+
+    # Get pharmacy internal ID
+    pharmacy_internal_id = get_pharmacy_id_by_chat_id(pharmacy_chat_id)
+    if not pharmacy_internal_id:
+        await msg.reply_text("❌ የፋርማሲ መለያ አልተገኘም።")
+        return ConversationHandler.END
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholder = "%s" if DATABASE_URL else "?"
+        cursor.execute(f"""
+            INSERT INTO pharmacy_responses (pharmacy_id, customer_id, medicine_name, price, status)
+            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 'responded')
+        """, (pharmacy_internal_id, customer_id, price_details[:50], price_details))
+        if DATABASE_URL:
+            conn.commit()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logging.error(f"Save pharmacy response error: {e}")
+        await msg.reply_text(f"❌ ስህተት: {str(e)[:100]}")
+        return ConversationHandler.END
+    finally:
+        if conn:
+            conn.close()
+
+    await msg.reply_text("✅ ዋጋው እና መረጃው ለደንበኛው በስኬት ተልኳል!", reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True))
+
+    if customer_id:
+        try:
+            await context.bot.send_message(
+                chat_id=int(customer_id),
+                text=f"🎉 የመድኃኒት መረጃ ከ{pharm_name} ተገኘ!\n\n"
+                     f"🏥 ፋርማሲ፦ {pharm_name}\n"
+                     f"📍 አካባቢ፦ {pharm_loc}\n"
+                     f"📞 ስልክ፦ {pharm_phone}\n"
+                     f"🕒 የስራ ሰዓት፦ {pharm_hours}\n\n"
+                     f"💰 የዋጋ እና የዝርዝር መረጃ፦\n{price_details}",
                 reply_markup=ReplyKeyboardMarkup(MAIN_KEYBOARD, resize_keyboard=True),
             )
         except Exception as e:
@@ -2367,7 +2376,7 @@ def main():
     )
 
     med_info_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^📖 የመድኃኒት መረጃ$"), prompt_med_info)],
+        entry_points=[MessageHandler(filters.Regex("^📖 ስለ ታዘዘልዎት መድኃኒት ለማወቅ$"), prompt_med_info)],
         states={WAITING_FOR_MED_INFO: [MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start), MessageHandler(filters.ALL, analyze_med_info)]},
         fallbacks=[CommandHandler("start", start), MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)],
     )
@@ -2391,6 +2400,7 @@ def main():
         fallbacks=[CommandHandler("start", start), MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)],
     )
 
+    # Order response conversation
     order_response_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(respond_order_callback, pattern="^respond_order_")],
         states={WAITING_FOR_ORDER_PRICE: [MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start), MessageHandler(filters.TEXT & ~filters.COMMAND, receive_price_details)]},
@@ -2398,27 +2408,19 @@ def main():
         per_message=False,
     )
 
-    # ✅ Medicine reminder conversation
-    medicine_reminder_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^💊 ማሳሰቢያ$"), add_medicine_reminder)],
-        states={WAITING_FOR_MEDICINE_REMINDER: [MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start), MessageHandler(filters.TEXT & ~filters.COMMAND, save_medicine_reminder)]},
-        fallbacks=[CommandHandler("start", start), MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start)],
-    )
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("manage", admin_manage_pharmacies))
     
-    app.add_handler(MessageHandler(filters.Regex("^📞 ድጋፍ$"), show_help))
-    app.add_handler(MessageHandler(filters.Regex("^📋 ፋርማሲዎች$"), list_pharmacies))
-    app.add_handler(MessageHandler(filters.Regex("^📋 ትዕዛዞች$"), show_orders))
-    app.add_handler(MessageHandler(filters.Regex("^📋 ማሳሰቢያዎች$"), list_reminders))
-    app.add_handler(MessageHandler(filters.Regex("^ሰርዝ"), delete_reminder))
+    app.add_handler(MessageHandler(filters.Regex("^📞 እገዛ / ድጋፍ$"), show_help))
+    app.add_handler(MessageHandler(filters.Regex("^📋 የፋርማሲዎች ዝርዝር$"), list_pharmacies))
+    app.add_handler(MessageHandler(filters.Regex("^📋 የታዘዙ መድኃኒቶች$"), show_orders))
     
     app.add_handler(CallbackQueryHandler(handle_admin_approval, pattern="^verify_"))
     app.add_handler(CallbackQueryHandler(translate_callback, pattern="^(translate_amharic|go_home)$"))
     app.add_handler(CallbackQueryHandler(show_english_callback, pattern="^show_english$"))
     
+    # Admin delete callbacks
     app.add_handler(CallbackQueryHandler(admin_delete_pharmacy_callback, pattern="^delete_pharm_"))
     app.add_handler(CallbackQueryHandler(admin_confirm_delete_callback, pattern="^confirm_delete_"))
     app.add_handler(CallbackQueryHandler(admin_cancel_delete_callback, pattern="^cancel_delete$"))
@@ -2429,9 +2431,8 @@ def main():
     app.add_handler(med_info_conv)
     app.add_handler(pharmacy_reply_conv)
     app.add_handler(pharmacy_conv)
-    app.add_handler(medicine_reminder_conv)
 
-    app.add_handler(MessageHandler(filters.Regex("^🏠 ዋና ገጽ$"), start))
+    app.add_handler(MessageHandler(filters.Regex("^🏠 ወደ ዋና ገጽ$"), start))
 
     app.add_error_handler(error_handler_func)
 
